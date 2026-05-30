@@ -1,0 +1,22 @@
+{
+  "name": "wechatLocal",
+  "description": "Local WeChat message collector.",
+  "transport": {
+    "type": "http",
+    "baseUrl": "http://127.0.0.1:0"
+  },
+  "methods": [],
+  "events": [
+    {
+      "name": "messageReceived",
+      "description": "Emitted when a local WeChat message is observed.",
+      "enabled": true,
+      "payload_schema": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  ],
+  "replace": true,
+  "managed_by": "wechat-bridge-collector"
+}
