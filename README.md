@@ -1,12 +1,12 @@
 # WeChat Bridge Collector
 
-跨平台微信本地消息采集器。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 产出的 `config.json` 和 `all_keys.json`，然后把新消息作为 bridge-agent 事件广播出去。
+跨平台微信本地消息采集器。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 的 key 提取能力，然后把新消息作为 bridge-agent 事件广播出去。
 
 ## 架构
 
 ```text
 WeChat local DB/WAL
-  -> ylytdeng/wechat-decrypt
+  -> ~/.wechat-bridge-collector/all_keys.json
   -> wechat-bridge-collector
   -> POST http://127.0.0.1:18081/v1/events
   -> bridge-agent websocket
@@ -31,16 +31,22 @@ cd wechat-bridge-collector
 git submodule update --init --recursive
 ```
 
-3. 初始化 `vendor/wechat-decrypt`：
+3. 初始化 collector 自己的配置和 key：
 
 ```bash
-cd vendor/wechat-decrypt
-pip install -r requirements.txt
-python main.py decrypt
-cd ../..
+wechat-bridge-collector setup
 ```
 
-macOS 首次提取 key 可能需要按 `wechat-decrypt` 文档给 WeChat.app 增加调试访问权限并重启微信。Windows 通常需要管理员权限。Linux 通常需要 root 或 `CAP_SYS_PTRACE`。
+collector 默认只读写自己的目录：
+
+```text
+~/.wechat-bridge-collector/config.json
+~/.wechat-bridge-collector/all_keys.json
+~/.wechat-bridge-collector/state.json
+~/.wechat-bridge-collector/decrypted/
+```
+
+macOS 首次提取 key 可能需要管理员权限；如果系统拦截 `task_for_pid`，`setup` 会尝试按“保留 WeChat 原 entitlements + 添加 `com.apple.security.get-task-allow`”的方式重签微信，并提示重启微信后重试。Windows 通常需要管理员权限。Linux 通常需要 root 或 `CAP_SYS_PTRACE`。
 
 ## 本机运行
 
@@ -53,6 +59,7 @@ pip install .
 验证读取链路：
 
 ```bash
+wechat-bridge-collector setup
 wechat-bridge-collector probe
 ```
 
@@ -61,6 +68,8 @@ wechat-bridge-collector probe
 ```bash
 export WECHAT_DECRYPT_DIR=/path/to/wechat-decrypt
 ```
+
+`--keys-file` 仍可用于高级场景，但默认不会读取其它工具的目录。
 
 注册 bridge-agent 事件声明：
 

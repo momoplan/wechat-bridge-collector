@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 DEFAULT_STATE_DIR = Path.home() / ".wechat-bridge-collector"
 DEFAULT_BRIDGE_BASE_URL = "http://127.0.0.1:18081"
 BRIDGE_AGENT_CONFIG_FILE = "agent-config.json"
+DEFAULT_KEYS_FILE_NAME = "all_keys.json"
+DEFAULT_DECRYPTED_DIR_NAME = "decrypted"
 
 
 @dataclass
@@ -35,6 +37,18 @@ class CollectorConfig:
     @property
     def state_path(self) -> Path:
         return Path(self.state_dir).expanduser() / "state.json"
+
+    @property
+    def config_path(self) -> Path:
+        return Path(self.state_dir).expanduser() / "config.json"
+
+    @property
+    def default_keys_path(self) -> Path:
+        return Path(self.state_dir).expanduser() / DEFAULT_KEYS_FILE_NAME
+
+    @property
+    def default_decrypted_path(self) -> Path:
+        return Path(self.state_dir).expanduser() / DEFAULT_DECRYPTED_DIR_NAME
 
     @property
     def bridge_events_url(self) -> str:
@@ -95,14 +109,11 @@ class CollectorConfig:
 
     def load_wechat_decrypt_runtime(self) -> dict[str, str]:
         wd_dir = self.resolved_wechat_decrypt_dir()
-        cfg_path = (
-            Path(self.wechat_decrypt_config).expanduser()
-            if self.wechat_decrypt_config
-            else wd_dir / "config.json"
-        )
         raw: dict[str, str] = {}
-        if cfg_path.exists():
-            raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+        if self.wechat_decrypt_config:
+            cfg_path = Path(self.wechat_decrypt_config).expanduser()
+            if cfg_path.exists():
+                raw = json.loads(cfg_path.read_text(encoding="utf-8"))
 
         db_dir = self.db_dir or raw.get("db_dir")
         if not db_dir:
@@ -110,26 +121,24 @@ class CollectorConfig:
         if not db_dir:
             raise RuntimeError(
                 "WeChat db_storage directory was not configured. "
-                "Run wechat-decrypt setup/main first, or set collector `db_dir`."
+                "Run `wechat-bridge-collector setup`, or set collector `db_dir`."
             )
 
-        def resolve_path(value: str | None, default_name: str) -> str:
-            value = value or raw.get(default_name) or default_name
+        def resolve_path(value: str | None, default_path: Path) -> str:
+            value = value or str(default_path)
             p = Path(value).expanduser()
             if not p.is_absolute():
-                p = wd_dir / p
+                p = Path(self.state_dir).expanduser() / p
             return str(p)
-
-        decrypted_dir = self.decrypted_dir or raw.get("decrypted_dir") or "decrypted"
-        decrypted_path = Path(decrypted_dir).expanduser()
-        if not decrypted_path.is_absolute():
-            decrypted_path = wd_dir / decrypted_path
 
         return {
             "wechat_decrypt_dir": str(wd_dir),
             "db_dir": str(Path(db_dir).expanduser()),
-            "keys_file": resolve_path(self.keys_file, "keys_file"),
-            "decrypted_dir": str(decrypted_path),
+            "keys_file": resolve_path(self.keys_file or raw.get("keys_file"), self.default_keys_path),
+            "decrypted_dir": resolve_path(
+                self.decrypted_dir or raw.get("decrypted_dir"),
+                self.default_decrypted_path,
+            ),
         }
 
     def save(self, path: str | os.PathLike[str] | None = None) -> Path:

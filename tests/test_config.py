@@ -76,6 +76,43 @@ class CollectorConfigTest(unittest.TestCase):
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(saved["service_name"], "wechatTest")
 
+    def test_default_runtime_uses_collector_owned_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / "collector"
+            wd_dir = Path(tmp) / "wechat-decrypt"
+            wd_dir.mkdir()
+            (wd_dir / "key_utils.py").write_text("", encoding="utf-8")
+            db_dir = Path(tmp) / "db_storage"
+            db_dir.mkdir()
+
+            cfg = CollectorConfig(
+                state_dir=str(state_dir),
+                wechat_decrypt_dir=str(wd_dir),
+                db_dir=str(db_dir),
+            )
+            runtime = cfg.load_wechat_decrypt_runtime()
+
+        self.assertEqual(runtime["keys_file"], str(state_dir / "all_keys.json"))
+        self.assertEqual(runtime["decrypted_dir"], str(state_dir / "decrypted"))
+
+    def test_explicit_keys_file_is_still_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wd_dir = Path(tmp) / "wechat-decrypt"
+            wd_dir.mkdir()
+            (wd_dir / "key_utils.py").write_text("", encoding="utf-8")
+            db_dir = Path(tmp) / "db_storage"
+            db_dir.mkdir()
+            keys_file = Path(tmp) / "external-keys.json"
+
+            cfg = CollectorConfig(
+                wechat_decrypt_dir=str(wd_dir),
+                db_dir=str(db_dir),
+                keys_file=str(keys_file),
+            )
+            runtime = cfg.load_wechat_decrypt_runtime()
+
+        self.assertEqual(runtime["keys_file"], str(keys_file))
+
 
 if __name__ == "__main__":
     unittest.main()

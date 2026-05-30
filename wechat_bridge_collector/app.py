@@ -7,6 +7,7 @@ import time
 
 from .bridge import BridgeClient
 from .config import CollectorConfig
+from .setup_keys import setup_collector
 from .state import CollectorState
 from .wechat_source import WeChatSource
 
@@ -40,6 +41,13 @@ def cmd_init_config(args: argparse.Namespace) -> int:
     cfg = _load_config(args)
     path = cfg.save(args.output)
     print(f"wrote config: {path}")
+    return 0
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    cfg = _load_config(args)
+    result = setup_collector(cfg, force=args.force, extract_keys=not args.no_extract_keys)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -160,6 +168,11 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init-config", help="write default collector config")
     init.add_argument("--output", help="output config path")
     init.set_defaults(func=cmd_init_config)
+
+    setup = sub.add_parser("setup", help="initialize collector config and local key file")
+    setup.add_argument("--force", action="store_true", help="overwrite existing all_keys.json")
+    setup.add_argument("--no-extract-keys", action="store_true", help="write config only")
+    setup.set_defaults(func=cmd_setup)
 
     probe = sub.add_parser("probe", help="verify local WeChat decrypt/read access")
     probe.set_defaults(func=cmd_probe)
