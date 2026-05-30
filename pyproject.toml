@@ -11,6 +11,9 @@ dependencies = [
 [project.scripts]
 wechat-bridge-collector = "wechat_bridge_collector.app:main"
 
+[tool.setuptools]
+packages = ["wechat_bridge_collector"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
