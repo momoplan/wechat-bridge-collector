@@ -6,10 +6,12 @@ import platform
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 DEFAULT_STATE_DIR = Path.home() / ".wechat-bridge-collector"
 DEFAULT_BRIDGE_BASE_URL = "http://127.0.0.1:18081"
+BRIDGE_AGENT_CONFIG_FILE = "agent-config.json"
 
 
 @dataclass
@@ -60,6 +62,12 @@ class CollectorConfig:
             os.environ.get("BRIDGE_AGENT_SERVICE_REGISTRATION_TOKEN")
             or cfg.service_registration_token
         )
+        if _is_loopback_bridge_url(cfg.bridge_base_url):
+            tokens = _load_bridge_agent_local_tokens()
+            cfg.bridge_event_token = cfg.bridge_event_token or tokens.get("event_server_token")
+            cfg.service_registration_token = (
+                cfg.service_registration_token or tokens.get("service_registration_token")
+            )
         cfg.wechat_decrypt_dir = (
             os.environ.get("WECHAT_DECRYPT_DIR") or cfg.wechat_decrypt_dir
         )
@@ -124,6 +132,76 @@ class CollectorConfig:
             "decrypted_dir": str(decrypted_path),
         }
 
+    def save(self, path: str | os.PathLike[str] | None = None) -> Path:
+        if path is None:
+            path = Path(self.state_dir).expanduser() / "config.json"
+        path = Path(path).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict[str, Any] = asdict(self)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return path
+
+
+def _is_loopback_bridge_url(value: str) -> bool:
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").lower()
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _load_bridge_agent_local_tokens() -> dict[str, str]:
+    for path in _bridge_agent_config_candidates():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        runtime = raw.get("runtime") or {}
+        tokens = {
+            key: value.strip()
+            for key in ("event_server_token", "service_registration_token")
+            if isinstance((value := runtime.get(key)), str) and value.strip()
+        }
+        if tokens:
+            return tokens
+    return {}
+
+
+def _bridge_agent_config_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    for env_name in ("WS_BRIDGE_CONFIG", "BRIDGE_AGENT_CONFIG"):
+        if value := os.environ.get(env_name):
+            candidates.append(Path(value).expanduser())
+
+    system = platform.system().lower()
+    if system == "darwin":
+        candidates.append(
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "com.baijimu.bridge-agent"
+            / BRIDGE_AGENT_CONFIG_FILE
+        )
+    elif system == "windows":
+        if value := os.environ.get("ProgramData"):
+            candidates.append(Path(value) / "Baijimu" / "BridgeAgent" / BRIDGE_AGENT_CONFIG_FILE)
+        if value := os.environ.get("APPDATA"):
+            candidates.append(
+                Path(value) / "baijimu" / "bridge-agent" / "config" / BRIDGE_AGENT_CONFIG_FILE
+            )
+    else:
+        config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        candidates.append(config_home / "bridge-agent" / BRIDGE_AGENT_CONFIG_FILE)
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for path in candidates:
+        expanded = path.expanduser()
+        if expanded in seen:
+            continue
+        seen.add(expanded)
+        if expanded.is_file():
+            deduped.append(expanded)
+    return deduped
+
 
 def _auto_detect_db_dir() -> str | None:
     system = platform.system().lower()
@@ -153,12 +231,3 @@ def _auto_detect_db_dir() -> str | None:
     matches = [p for p in base.glob(pattern) if p.is_dir()]
     matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return str(matches[0]) if matches else None
-
-    def save(self, path: str | os.PathLike[str] | None = None) -> Path:
-        if path is None:
-            path = Path(self.state_dir).expanduser() / "config.json"
-        path = Path(path).expanduser()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        data: dict[str, Any] = asdict(self)
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        return path

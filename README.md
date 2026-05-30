@@ -68,6 +68,14 @@ export WECHAT_DECRYPT_DIR=/path/to/wechat-decrypt
 wechat-bridge-collector register
 ```
 
+如果 Bridge Agent 使用默认本机地址，collector 会自动读取本机 Bridge Agent 配置里的
+`runtime.service_registration_token` 和 `runtime.event_server_token`。需要覆盖时可使用：
+
+```bash
+export BRIDGE_AGENT_SERVICE_REGISTRATION_TOKEN=...
+export BRIDGE_AGENT_EVENT_TOKEN=...
+```
+
 启动采集器：
 
 ```bash
