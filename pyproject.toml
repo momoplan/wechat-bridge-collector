@@ -1,7 +1,7 @@
 [project]
 name = "wechat-bridge-collector"
-version = "0.1.0"
-description = "Cross-platform WeChat local message collector for bridge-agent events."
+version = "0.2.0"
+description = "Cross-platform WeChat local message collector and query service for bridge-agent."
 requires-python = ">=3.10"
 dependencies = [
   "pycryptodome>=3.19,<4",

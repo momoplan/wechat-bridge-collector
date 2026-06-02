@@ -9,6 +9,131 @@ from typing import Any
 from .config import CollectorConfig
 
 
+METHOD_DECLARATIONS: list[dict[str, Any]] = [
+    {
+        "name": "getRecentSessions",
+        "description": "List recent WeChat conversations with latest-message summaries.",
+        "path": "/invoke/getRecentSessions",
+        "httpMethod": "POST",
+        "timeoutSecs": 30,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20}
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "getContacts",
+        "description": "Search or list local WeChat contacts and group conversations.",
+        "path": "/invoke/getContacts",
+        "httpMethod": "POST",
+        "timeoutSecs": 30,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "default": ""},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "getChatHistory",
+        "description": "Read paginated message history for one WeChat conversation.",
+        "path": "/invoke/getChatHistory",
+        "httpMethod": "POST",
+        "timeoutSecs": 60,
+        "input_schema": {
+            "type": "object",
+            "required": ["chat"],
+            "properties": {
+                "chat": {"type": "string", "description": "Conversation name, remark, group name, or wxid."},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "startTime": {"type": "string", "default": ""},
+                "endTime": {"type": "string", "default": ""},
+                "oldestFirst": {"type": "boolean", "default": False},
+                "messageTypes": {"type": "array", "items": {"type": "string"}},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "searchMessages",
+        "description": "Search local WeChat messages by keyword, optionally scoped to one conversation.",
+        "path": "/invoke/searchMessages",
+        "httpMethod": "POST",
+        "timeoutSecs": 90,
+        "input_schema": {
+            "type": "object",
+            "required": ["keyword"],
+            "properties": {
+                "keyword": {"type": "string"},
+                "chat": {"type": "string", "default": ""},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "startTime": {"type": "string", "default": ""},
+                "endTime": {"type": "string", "default": ""},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "getMessageById",
+        "description": "Fetch one local WeChat message by collector messageId.",
+        "path": "/invoke/getMessageById",
+        "httpMethod": "POST",
+        "timeoutSecs": 30,
+        "input_schema": {
+            "type": "object",
+            "required": ["messageId"],
+            "properties": {"messageId": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "getChatImages",
+        "description": "List image messages in one WeChat conversation.",
+        "path": "/invoke/getChatImages",
+        "httpMethod": "POST",
+        "timeoutSecs": 60,
+        "input_schema": {
+            "type": "object",
+            "required": ["chat"],
+            "properties": {
+                "chat": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "startTime": {"type": "string", "default": ""},
+                "endTime": {"type": "string", "default": ""},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "getVoiceMessages",
+        "description": "List voice messages in one WeChat conversation.",
+        "path": "/invoke/getVoiceMessages",
+        "httpMethod": "POST",
+        "timeoutSecs": 60,
+        "input_schema": {
+            "type": "object",
+            "required": ["chat"],
+            "properties": {
+                "chat": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "startTime": {"type": "string", "default": ""},
+                "endTime": {"type": "string", "default": ""},
+            },
+            "additionalProperties": False,
+        },
+    },
+]
+
+
 @dataclass
 class BridgeResponse:
     ok: bool
@@ -39,15 +164,15 @@ class BridgeClient:
         except Exception as exc:
             return BridgeResponse(False, 0, str(exc))
 
-    def register_service(self) -> BridgeResponse:
+    def register_service(self, method_base_url: str | None = None) -> BridgeResponse:
         registration = {
             "name": self.config.service_name,
             "description": "Local WeChat message collector.",
             "transport": {
                 "type": "http",
-                "baseUrl": "http://127.0.0.1:0",
+                "baseUrl": method_base_url or self.config.method_base_url,
             },
-            "methods": [],
+            "methods": METHOD_DECLARATIONS,
             "events": [
                 {
                     "name": self.config.event_name,
@@ -82,4 +207,3 @@ class BridgeClient:
             request,
             self.config.bridge_event_token,
         )
-

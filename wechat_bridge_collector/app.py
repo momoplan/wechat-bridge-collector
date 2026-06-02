@@ -7,6 +7,7 @@ import time
 
 from .bridge import BridgeClient
 from .config import CollectorConfig
+from .query_server import QueryMethodServer
 from .setup_keys import setup_collector
 from .state import CollectorState
 from .wechat_source import WeChatSource
@@ -30,6 +31,10 @@ def _load_config(args: argparse.Namespace) -> CollectorConfig:
         cfg.keys_file = args.keys_file
     if getattr(args, "state_dir", None):
         cfg.state_dir = args.state_dir
+    if getattr(args, "method_host", None):
+        cfg.method_host = args.method_host
+    if getattr(args, "method_port", None) is not None:
+        cfg.method_port = args.method_port
     if getattr(args, "poll_interval", None) is not None:
         cfg.poll_interval_secs = args.poll_interval
     if getattr(args, "batch_size", None) is not None:
@@ -76,76 +81,81 @@ def cmd_run(args: argparse.Namespace) -> int:
         cfg.include_outgoing = False
 
     source = WeChatSource(cfg)
+    method_server = QueryMethodServer(cfg, source)
+    method_server.start()
     bridge = BridgeClient(cfg)
     state = CollectorState.load(cfg.state_path)
     first_start = not cfg.state_path.exists()
 
-    if args.register:
-        response = bridge.register_service()
-        if not response.ok:
-            print(f"register failed: HTTP {response.status} {response.body}", file=sys.stderr)
-            return 1
-        print("registered bridge-agent event service")
+    try:
+        if args.register:
+            response = bridge.register_service(method_server.base_url)
+            if not response.ok:
+                print(f"register failed: HTTP {response.status} {response.body}", file=sys.stderr)
+                return 1
+            print("registered bridge-agent service methods and events")
 
-    if first_start or args.reset_state:
-        state = CollectorState()
-        source.bootstrap_state(state, backfill_seconds=args.backfill_seconds)
-        state.save(cfg.state_path)
-        if args.backfill_seconds <= 0:
-            print(f"initialized state without historical broadcast: {cfg.state_path}")
-
-    print(
-        f"collector running service={cfg.service_name}.{cfg.event_name} "
-        f"bridge={cfg.bridge_events_url} state={cfg.state_path}"
-    )
-
-    while True:
-        try:
-            current_sessions, changed = source.changed_usernames(state)
-            emitted = 0
-            failed = False
-            for candidate in source.iter_new_messages(state, changed, cfg.batch_size):
-                if args.dry_run:
-                    print(json.dumps(candidate.payload, ensure_ascii=False))
-                    ok = True
-                    status = 202
-                    body = ""
-                else:
-                    response = bridge.emit_message(
-                        candidate.payload,
-                        candidate.event_id,
-                        candidate.occurred_at,
-                    )
-                    ok = response.ok
-                    status = response.status
-                    body = response.body
-                if not ok:
-                    print(
-                        f"emit failed: HTTP {status} {body}; "
-                        "state cursor was not advanced",
-                        file=sys.stderr,
-                    )
-                    failed = True
-                    break
-                state.set_cursor(
-                    candidate.cursor_key,
-                    candidate.cursor.create_time,
-                    candidate.cursor.local_id,
-                )
-                emitted += 1
-
-            if not failed:
-                state.sessions = current_sessions
+        if first_start or args.reset_state:
+            state = CollectorState()
+            source.bootstrap_state(state, backfill_seconds=args.backfill_seconds)
             state.save(cfg.state_path)
+            if args.backfill_seconds <= 0:
+                print(f"initialized state without historical broadcast: {cfg.state_path}")
 
-            if args.once:
-                print(f"emitted={emitted} changed_sessions={len(changed)}")
+        print(
+            f"collector running service={cfg.service_name}.{cfg.event_name} "
+            f"bridge={cfg.bridge_events_url} methods={method_server.base_url} state={cfg.state_path}"
+        )
+
+        while True:
+            try:
+                current_sessions, changed = source.changed_usernames(state)
+                emitted = 0
+                failed = False
+                for candidate in source.iter_new_messages(state, changed, cfg.batch_size):
+                    if args.dry_run:
+                        print(json.dumps(candidate.payload, ensure_ascii=False))
+                        ok = True
+                        status = 202
+                        body = ""
+                    else:
+                        response = bridge.emit_message(
+                            candidate.payload,
+                            candidate.event_id,
+                            candidate.occurred_at,
+                        )
+                        ok = response.ok
+                        status = response.status
+                        body = response.body
+                    if not ok:
+                        print(
+                            f"emit failed: HTTP {status} {body}; "
+                            "state cursor was not advanced",
+                            file=sys.stderr,
+                        )
+                        failed = True
+                        break
+                    state.set_cursor(
+                        candidate.cursor_key,
+                        candidate.cursor.create_time,
+                        candidate.cursor.local_id,
+                    )
+                    emitted += 1
+
+                if not failed:
+                    state.sessions = current_sessions
+                state.save(cfg.state_path)
+
+                if args.once:
+                    print(f"emitted={emitted} changed_sessions={len(changed)}")
+                    return 0
+
+                time.sleep(cfg.poll_interval_secs)
+            except KeyboardInterrupt:
+                print("collector stopped")
                 return 0
-
-            time.sleep(cfg.poll_interval_secs)
-        except KeyboardInterrupt:
-            print("collector stopped")
-            return 0
+    finally:
+        method_server.stop()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -162,6 +172,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db-dir", help="WeChat db_storage directory")
     parser.add_argument("--keys-file", help="wechat-decrypt all_keys.json path")
     parser.add_argument("--state-dir", help="collector state directory")
+    parser.add_argument("--method-host", help="local method server host")
+    parser.add_argument("--method-port", type=int, help="local method server port")
 
     sub = parser.add_subparsers(dest="command", required=True)
 

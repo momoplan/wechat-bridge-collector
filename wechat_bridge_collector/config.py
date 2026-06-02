@@ -24,6 +24,8 @@ class CollectorConfig:
     poll_interval_secs: float = 2.0
     batch_size: int = 200
     state_dir: str = str(DEFAULT_STATE_DIR)
+    method_host: str = "127.0.0.1"
+    method_port: int = 18082
     bridge_event_token: str | None = None
     service_registration_token: str | None = None
     wechat_decrypt_dir: str | None = None
@@ -57,6 +59,10 @@ class CollectorConfig:
     @property
     def bridge_services_url(self) -> str:
         return self.bridge_base_url.rstrip("/") + "/v1/services"
+
+    @property
+    def method_base_url(self) -> str:
+        return f"http://{self.method_host}:{int(self.method_port)}"
 
     @classmethod
     def load(cls, path: str | os.PathLike[str] | None = None) -> "CollectorConfig":

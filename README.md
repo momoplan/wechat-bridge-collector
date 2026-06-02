@@ -1,6 +1,6 @@
 # WeChat Bridge Collector
 
-跨平台微信本地消息采集器。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 的 key 提取能力，然后把新消息作为 bridge-agent 事件广播出去。
+跨平台微信本地消息采集器和只读查询服务。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 的 key 提取能力，然后把新消息作为 bridge-agent 事件广播出去，同时向 bridge-agent 注册本机 HTTP methods 用于查询最近会话、联系人、聊天记录和消息搜索。
 
 ## 架构
 
@@ -8,6 +8,7 @@
 WeChat local DB/WAL
   -> ~/.wechat-bridge-collector/all_keys.json
   -> wechat-bridge-collector
+  -> http://127.0.0.1:18082/invoke/*
   -> POST http://127.0.0.1:18081/v1/events
   -> bridge-agent websocket
   -> relay subscribers
@@ -91,6 +92,12 @@ export BRIDGE_AGENT_EVENT_TOKEN=...
 wechat-bridge-collector run --register
 ```
 
+`run` 会同时启动本机只读 method server，默认地址是 `http://127.0.0.1:18082`。需要换端口时：
+
+```bash
+wechat-bridge-collector --method-port 18083 run --register
+```
+
 首次启动默认只建立当前游标，不广播历史消息。需要回放最近历史时显式指定：
 
 ```bash
@@ -122,6 +129,38 @@ payload 示例：
   "occurredAt": "2026-05-30T10:00:00+00:00",
   "source": "wechat-local-db",
   "platform": "darwin"
+}
+```
+
+## 查询方法
+
+`wechat-bridge-collector run --register` 会向 bridge-agent 注册以下 methods：
+
+- `getRecentSessions`：查询最近会话。
+- `getContacts`：搜索或列出联系人、群聊。
+- `getChatHistory`：按会话分页查询消息历史。
+- `searchMessages`：按关键词搜索消息，可限定会话和时间范围。
+- `getMessageById`：按事件 payload 里的 `messageId` 精确查询单条消息。
+- `getChatImages`：列出指定会话里的图片消息。
+- `getVoiceMessages`：列出指定会话里的语音消息。
+
+本机直连调试示例：
+
+```bash
+curl -s http://127.0.0.1:18082/invoke/getChatHistory \
+  -H 'Content-Type: application/json' \
+  -d '{"chat":"文件传输助手","limit":20}'
+```
+
+返回体统一为：
+
+```json
+{
+  "success": true,
+  "data": {
+    "messages": []
+  },
+  "error": null
 }
 ```
 

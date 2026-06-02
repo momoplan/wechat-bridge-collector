@@ -49,6 +49,22 @@ TYPE_LABELS = {
     10000: ("system", "系统"),
     10002: ("recall", "撤回"),
 }
+TYPE_NAME_TO_CODES = {
+    "text": {1},
+    "image": {3},
+    "voice": {34},
+    "video": {43},
+    "sticker": {47},
+    "emoji": {47},
+    "location": {48},
+    "app": {49},
+    "file": {49},
+    "contact_card": {42},
+    "namecard": {42},
+    "call": {50},
+    "system": {10000},
+    "recall": {10002},
+}
 
 
 @dataclass
@@ -163,19 +179,42 @@ class WeChatSource:
         }
 
     def contact_names(self) -> dict[str, str]:
+        return {
+            row["username"]: row["displayName"]
+            for row in self.contacts(limit=100_000)
+            if row.get("username")
+        }
+
+    def contacts(self, query: str = "", limit: int = 50) -> list[dict[str, Any]]:
         path = self.cache.get(os.path.join("contact", "contact.db"))
         if not path:
-            return {}
-        names = {}
+            return []
         with closing(sqlite3.connect(path)) as conn:
             try:
                 rows = conn.execute("SELECT username, nick_name, remark FROM contact").fetchall()
             except sqlite3.Error:
-                return {}
+                return []
+        query_l = query.strip().lower()
+        contacts = []
         for username, nick, remark in rows:
-            if username:
-                names[username] = remark or nick or username
-        return names
+            if not username:
+                continue
+            display = remark or nick or username
+            item = {
+                "username": username,
+                "displayName": display,
+                "nickName": nick or "",
+                "remark": remark or "",
+                "isGroup": "@chatroom" in username,
+            }
+            if query_l and not any(
+                query_l in str(value or "").lower()
+                for value in (username, display, nick, remark)
+            ):
+                continue
+            contacts.append(item)
+        contacts.sort(key=lambda item: (not item["remark"], item["displayName"].lower()))
+        return contacts[:normalize_limit(limit, 100_000)]
 
     def read_session_state(self) -> dict[str, int]:
         path = self.cache.get(os.path.join("session", "session.db"))
@@ -190,6 +229,59 @@ class WeChatSource:
                 """
             ).fetchall()
         return {username: int(ts or 0) for username, ts in rows if username}
+
+    def recent_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
+        path = self.cache.get(os.path.join("session", "session.db"))
+        if not path:
+            return []
+        names = self.contact_names()
+        with closing(sqlite3.connect(path)) as conn:
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT username, unread_count, summary, last_timestamp,
+                           last_msg_type, last_msg_sender, last_sender_display_name
+                    FROM SessionTable
+                    WHERE last_timestamp > 0
+                    ORDER BY last_timestamp DESC
+                    LIMIT ?
+                    """,
+                    (normalize_limit(limit, 200),),
+                ).fetchall()
+            except sqlite3.Error:
+                rows = conn.execute(
+                    """
+                    SELECT username, 0, '', last_timestamp, 0, '', ''
+                    FROM SessionTable
+                    WHERE last_timestamp > 0
+                    ORDER BY last_timestamp DESC
+                    LIMIT ?
+                    """,
+                    (normalize_limit(limit, 200),),
+                ).fetchall()
+        sessions = []
+        for username, unread, summary, ts, msg_type, sender, sender_name in rows:
+            if not username:
+                continue
+            summary_text = decompress_content(summary, 4 if isinstance(summary, bytes) else None) or ""
+            is_group = "@chatroom" in username
+            sender_id, text = parse_message_content(summary_text, is_group)
+            sender_id = sender or sender_id or ""
+            sessions.append(
+                {
+                    "conversationId": username,
+                    "conversationName": names.get(username, username),
+                    "isGroup": is_group,
+                    "unreadCount": int(unread or 0),
+                    "summary": text,
+                    "lastTimestamp": int(ts or 0),
+                    "lastOccurredAt": timestamp_to_iso(int(ts or 0)),
+                    "lastMessageType": TYPE_LABELS.get(int(msg_type or 0) & 0xFFFFFFFF, ("unknown", f"type={msg_type or 0}"))[0],
+                    "lastSenderId": sender_id,
+                    "lastSenderName": names.get(sender_id, sender_name or sender_id),
+                }
+            )
+        return sessions
 
     def bootstrap_state(self, state: CollectorState, backfill_seconds: int = 0) -> None:
         sessions = self.read_session_state()
@@ -235,6 +327,169 @@ class WeChatSource:
                 cursor = state.cursor_for(cursor_key) or Cursor()
                 yield from self._query_table(path, rel_key, table_name, username, names, cursor, batch_size)
 
+    def get_chat_history(
+        self,
+        chat: str,
+        limit: int = 50,
+        offset: int = 0,
+        start_time: Any = "",
+        end_time: Any = "",
+        oldest_first: bool = False,
+        message_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        ctx = self.resolve_chat(chat)
+        if not ctx:
+            raise ValueError(f"找不到聊天对象: {chat}")
+        type_filter = resolve_type_filter(message_types)
+        start_ts, end_ts = parse_time_range(start_time, end_time)
+        messages = self._query_messages_for_username(
+            ctx["conversationId"],
+            limit=limit,
+            offset=offset,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            oldest_first=oldest_first,
+            type_filter=type_filter,
+        )
+        return {
+            "conversation": ctx,
+            "messages": messages,
+            "limit": normalize_limit(limit, 500),
+            "offset": normalize_offset(offset),
+            "hasMoreHint": len(messages) >= normalize_limit(limit, 500),
+        }
+
+    def search_messages(
+        self,
+        keyword: str,
+        chat: str = "",
+        limit: int = 20,
+        offset: int = 0,
+        start_time: Any = "",
+        end_time: Any = "",
+    ) -> dict[str, Any]:
+        keyword = str(keyword or "").strip()
+        if not keyword:
+            raise ValueError("keyword 不能为空")
+        start_ts, end_ts = parse_time_range(start_time, end_time)
+        if str(chat or "").strip():
+            ctx = self.resolve_chat(chat)
+            if not ctx:
+                raise ValueError(f"找不到聊天对象: {chat}")
+            usernames = [ctx["conversationId"]]
+        else:
+            ctx = None
+            usernames = self.known_conversation_ids()
+        all_messages: list[dict[str, Any]] = []
+        for username in usernames:
+            all_messages.extend(
+                self._query_messages_for_username(
+                    username,
+                    limit=normalize_limit(limit, 500) + normalize_offset(offset),
+                    offset=0,
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    oldest_first=False,
+                    keyword=keyword,
+                )
+            )
+        all_messages.sort(key=lambda item: (int(item["timestamp"]), int(item["localId"])), reverse=True)
+        normalized_limit = normalize_limit(limit, 500)
+        normalized_offset = normalize_offset(offset)
+        page = all_messages[normalized_offset : normalized_offset + normalized_limit]
+        return {
+            "conversation": ctx,
+            "keyword": keyword,
+            "messages": page,
+            "limit": normalized_limit,
+            "offset": normalized_offset,
+            "hasMoreHint": len(all_messages) > normalized_offset + normalized_limit,
+        }
+
+    def get_message_by_id(self, message_id: str) -> dict[str, Any] | None:
+        rel_key, table_name, local_id = parse_message_id(message_id)
+        path = self.cache.get(rel_key)
+        if not path:
+            return None
+        username = self.username_for_table(table_name) or ""
+        names = self.contact_names()
+        with closing(sqlite3.connect(path)) as conn:
+            id_to_username = load_name2id_maps(conn)
+            has_ct = has_column(conn, table_name, "WCDB_CT_message_content")
+            ct_expr = "WCDB_CT_message_content" if has_ct else "NULL"
+            try:
+                row = conn.execute(
+                    f"""
+                    SELECT local_id, local_type, create_time, real_sender_id,
+                           message_content, {ct_expr}
+                    FROM [{table_name}]
+                    WHERE local_id = ?
+                    LIMIT 1
+                    """,
+                    (local_id,),
+                ).fetchone()
+            except sqlite3.Error:
+                return None
+        if not row:
+            return None
+        if not username:
+            username = self.username_for_message_row(row, names) or ""
+        candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username)
+        return candidate.payload if candidate else None
+
+    def get_chat_images(self, chat: str, limit: int = 20, offset: int = 0, start_time: Any = "", end_time: Any = "") -> dict[str, Any]:
+        return self.get_chat_history(
+            chat,
+            limit=limit,
+            offset=offset,
+            start_time=start_time,
+            end_time=end_time,
+            oldest_first=False,
+            message_types=["image"],
+        )
+
+    def get_voice_messages(self, chat: str, limit: int = 20, offset: int = 0, start_time: Any = "", end_time: Any = "") -> dict[str, Any]:
+        return self.get_chat_history(
+            chat,
+            limit=limit,
+            offset=offset,
+            start_time=start_time,
+            end_time=end_time,
+            oldest_first=False,
+            message_types=["voice"],
+        )
+
+    def resolve_chat(self, query: str) -> dict[str, Any] | None:
+        query = str(query or "").strip()
+        if not query:
+            return None
+        names = self.contact_names()
+        candidates = []
+        for username in self.known_conversation_ids():
+            display = names.get(username, username)
+            item = {
+                "conversationId": username,
+                "conversationName": display,
+                "isGroup": "@chatroom" in username,
+            }
+            candidates.append(item)
+        query_l = query.lower()
+        for item in candidates:
+            if item["conversationId"].lower() == query_l:
+                return item
+        for item in candidates:
+            if item["conversationName"].lower() == query_l:
+                return item
+        for item in candidates:
+            if query_l in item["conversationName"].lower() or query_l in item["conversationId"].lower():
+                return item
+        return None
+
+    def known_conversation_ids(self) -> list[str]:
+        usernames = set(self.read_session_state())
+        usernames.update(row["username"] for row in self.contacts(limit=100_000))
+        return sorted(username for username in usernames if username)
+
     def _message_tables_for_username(self, username: str) -> list[tuple[str, str, str]]:
         table_name = "Msg_" + hashlib.md5(username.encode()).hexdigest()
         matches = []
@@ -253,6 +508,104 @@ class WeChatSource:
             except sqlite3.Error:
                 continue
         return matches
+
+    def _query_messages_for_username(
+        self,
+        username: str,
+        limit: int,
+        offset: int = 0,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+        oldest_first: bool = False,
+        keyword: str = "",
+        type_filter: set[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        names = self.contact_names()
+        candidate_limit = normalize_limit(limit, 500) + normalize_offset(offset)
+        collected: list[dict[str, Any]] = []
+        for rel_key, table_name, path in self._message_tables_for_username(username):
+            with closing(sqlite3.connect(path)) as conn:
+                id_to_username = load_name2id_maps(conn)
+                rows = self._query_table_rows(
+                    conn,
+                    table_name,
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    type_filter=type_filter,
+                    limit=candidate_limit,
+                    oldest_first=oldest_first,
+                )
+            for row in rows:
+                candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username)
+                if not candidate:
+                    continue
+                text = str(candidate.payload.get("text") or "")
+                if keyword and keyword.lower() not in text.lower():
+                    continue
+                collected.append(candidate.payload)
+        collected.sort(
+            key=lambda item: (int(item["timestamp"]), int(item["localId"])),
+            reverse=not oldest_first,
+        )
+        normalized_offset = normalize_offset(offset)
+        normalized_limit = normalize_limit(limit, 500)
+        return collected[normalized_offset : normalized_offset + normalized_limit]
+
+    def _query_table_rows(
+        self,
+        conn: sqlite3.Connection,
+        table_name: str,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+        type_filter: set[int] | None = None,
+        limit: int = 50,
+        oldest_first: bool = False,
+    ) -> list[tuple[Any, ...]]:
+        has_ct = has_column(conn, table_name, "WCDB_CT_message_content")
+        ct_expr = "WCDB_CT_message_content" if has_ct else "NULL"
+        clauses = []
+        params: list[Any] = []
+        if start_ts is not None:
+            clauses.append("create_time >= ?")
+            params.append(start_ts)
+        if end_ts is not None:
+            clauses.append("create_time <= ?")
+            params.append(end_ts)
+        if type_filter:
+            placeholders = ",".join("?" for _ in type_filter)
+            clauses.append(f"(local_type & 4294967295) IN ({placeholders})")
+            params.extend(sorted(type_filter))
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        order = "ASC" if oldest_first else "DESC"
+        params.append(normalize_limit(limit, 1000))
+        return conn.execute(
+            f"""
+            SELECT local_id, local_type, create_time, real_sender_id,
+                   message_content, {ct_expr}
+            FROM [{table_name}]
+            {where}
+            ORDER BY create_time {order}, local_id {order}
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+    def username_for_table(self, table_name: str) -> str | None:
+        if not MSG_TABLE_RE.fullmatch(table_name):
+            return None
+        target = table_name.removeprefix("Msg_")
+        for username in self.known_conversation_ids():
+            if hashlib.md5(username.encode()).hexdigest() == target:
+                return username
+        return None
+
+    def username_for_message_row(self, row: tuple[Any, ...], names: dict[str, str]) -> str | None:
+        _local_id, _local_type, _create_time, real_sender_id, raw_content, ct = row
+        content = decompress_content(raw_content, ct) or ""
+        sender, _text = parse_message_content(content, True)
+        if sender and sender in names:
+            return sender
+        return None
 
     @staticmethod
     def _max_cursor_with_conn(conn: sqlite3.Connection, table_name: str) -> Cursor:
@@ -425,6 +778,103 @@ def load_name2id_maps(conn: sqlite3.Connection) -> dict[int, str]:
     except sqlite3.Error:
         return {}
     return {int(rowid): user_name for rowid, user_name in rows if user_name}
+
+
+def normalize_limit(value: Any, maximum: int) -> int:
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        limit = 50
+    return max(1, min(limit, maximum))
+
+
+def normalize_offset(value: Any) -> int:
+    try:
+        offset = int(value)
+    except (TypeError, ValueError):
+        offset = 0
+    return max(0, offset)
+
+
+def timestamp_to_iso(timestamp: int) -> str | None:
+    if timestamp <= 0:
+        return None
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+
+
+def parse_time_range(start_time: Any, end_time: Any) -> tuple[int | None, int | None]:
+    start_ts = parse_time_value(start_time, is_end=False)
+    end_ts = parse_time_value(end_time, is_end=True)
+    if start_ts is not None and end_ts is not None and start_ts > end_ts:
+        raise ValueError("startTime 不能晚于 endTime")
+    return start_ts, end_ts
+
+
+def parse_time_value(value: Any, is_end: bool) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    normalized = text.replace("T", " ")
+    formats = [
+        ("%Y-%m-%d %H:%M:%S", False),
+        ("%Y-%m-%d %H:%M", False),
+        ("%Y-%m-%d", True),
+    ]
+    for fmt, date_only in formats:
+        try:
+            dt = datetime.strptime(normalized, fmt)
+            if date_only and is_end:
+                dt = dt.replace(hour=23, minute=59, second=59)
+            return int(dt.timestamp())
+        except ValueError:
+            continue
+    try:
+        dt = datetime.fromisoformat(text)
+        return int(dt.timestamp())
+    except ValueError as exc:
+        raise ValueError(f"无法解析时间: {value}") from exc
+
+
+def resolve_type_filter(message_types: list[str] | None) -> set[int] | None:
+    if not message_types:
+        return None
+    codes: set[int] = set()
+    unknown: list[str] = []
+    for item in message_types:
+        key = str(item or "").strip().lower()
+        if not key:
+            continue
+        if key.isdigit():
+            codes.add(int(key))
+            continue
+        mapped = TYPE_NAME_TO_CODES.get(key)
+        if mapped:
+            codes.update(mapped)
+        else:
+            unknown.append(key)
+    if unknown:
+        raise ValueError(f"未知消息类型: {', '.join(unknown)}")
+    return codes or None
+
+
+def parse_message_id(message_id: str) -> tuple[str, str, int]:
+    parts = str(message_id or "").rsplit(":", 2)
+    if len(parts) != 3:
+        raise ValueError("messageId 格式不正确")
+    rel_key, table_name, local_id_text = parts
+    if not rel_key or not MSG_TABLE_RE.fullmatch(table_name):
+        raise ValueError("messageId 格式不正确")
+    try:
+        local_id = int(local_id_text)
+    except ValueError as exc:
+        raise ValueError("messageId localId 不正确") from exc
+    return rel_key, table_name, local_id
 
 
 def has_column(conn: sqlite3.Connection, table_name: str, column: str) -> bool:
