@@ -24,9 +24,21 @@ class BridgeRegistrationTest(unittest.TestCase):
 
         self.assertEqual(captured["data"]["transport"]["baseUrl"], "http://127.0.0.1:19091")
         self.assertEqual(
+            captured["data"]["healthCheck"],
+            {
+                "type": "http",
+                "path": "/health",
+                "timeoutSecs": 2,
+                "expectStatus": 200,
+            },
+        )
+        self.assertEqual(
             [method["name"] for method in captured["data"]["methods"]],
             [method["name"] for method in METHOD_DECLARATIONS],
         )
+        if "startCommand" in captured["data"]:
+            self.assertEqual(captured["data"]["startCommand"]["type"], "shell_command")
+            self.assertIn("launchctl kickstart", captured["data"]["startCommand"]["command"][-1])
         self.assertIn("messageReceived", [event["name"] for event in captured["data"]["events"]])
 
 

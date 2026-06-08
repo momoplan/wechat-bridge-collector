@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import platform
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -165,12 +166,19 @@ class BridgeClient:
             return BridgeResponse(False, 0, str(exc))
 
     def register_service(self, method_base_url: str | None = None) -> BridgeResponse:
+        base_url = method_base_url or self.config.method_base_url
         registration = {
             "name": self.config.service_name,
             "description": "Local WeChat message collector.",
             "transport": {
                 "type": "http",
-                "baseUrl": method_base_url or self.config.method_base_url,
+                "baseUrl": base_url,
+            },
+            "healthCheck": {
+                "type": "http",
+                "path": "/health",
+                "timeoutSecs": 2,
+                "expectStatus": 200,
             },
             "methods": METHOD_DECLARATIONS,
             "events": [
@@ -187,6 +195,9 @@ class BridgeClient:
             "replace": True,
             "managed_by": "wechat-bridge-collector",
         }
+        start_command = collector_start_command()
+        if start_command:
+            registration["startCommand"] = start_command
         return self._post_json(
             self.config.bridge_services_url,
             registration,
@@ -207,3 +218,18 @@ class BridgeClient:
             request,
             self.config.bridge_event_token,
         )
+
+
+def collector_start_command() -> dict[str, Any] | None:
+    if platform.system().lower() != "darwin":
+        return None
+    return {
+        "type": "shell_command",
+        "command": [
+            "/bin/sh",
+            "-lc",
+            "launchctl bootstrap gui/$(id -u) \"$HOME/Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist\" 2>/dev/null || true; "
+            "launchctl kickstart -k gui/$(id -u)/com.baijimu.wechat-bridge-collector",
+        ],
+        "timeoutSecs": 15,
+    }

@@ -5,6 +5,12 @@
     "type": "http",
     "baseUrl": "http://127.0.0.1:18082"
   },
+  "healthCheck": {
+    "type": "http",
+    "path": "/health",
+    "timeoutSecs": 2,
+    "expectStatus": 200
+  },
   "methods": [
     {
       "name": "getRecentSessions",
@@ -245,6 +251,15 @@
       }
     }
   ],
+  "startCommand": {
+    "type": "shell_command",
+    "command": [
+      "/bin/sh",
+      "-lc",
+      "launchctl bootstrap gui/$(id -u) \"$HOME/Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist\" 2>/dev/null || true; launchctl kickstart -k gui/$(id -u)/com.baijimu.wechat-bridge-collector"
+    ],
+    "timeoutSecs": 15
+  },
   "replace": true,
   "managed_by": "wechat-bridge-collector"
 }

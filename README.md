@@ -136,6 +136,11 @@ payload 示例：
 
 `wechat-bridge-collector run --register` 会向 bridge-agent 注册以下 methods：
 
+注册 payload 同时包含：
+
+- `healthCheck`：`GET /health`，供 Bridge Agent 小客户端展示采集器是否可用。
+- `startCommand`：macOS 下通过 LaunchAgent 触发 `com.baijimu.wechat-bridge-collector` 启动；Bridge Agent 只按注册字段执行，不内置 WeChat 采集器逻辑。
+
 - `getRecentSessions`：查询最近会话。
 - `getContacts`：搜索或列出联系人、群聊。
 - `getChatHistory`：按会话分页查询消息历史。
