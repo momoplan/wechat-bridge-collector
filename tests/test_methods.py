@@ -1,8 +1,10 @@
 import json
+import sys
 import unittest
 import urllib.error
 import urllib.request
 
+from wechat_bridge_collector.autostart import start_command
 from wechat_bridge_collector.bridge import BridgeClient, METHOD_DECLARATIONS
 from wechat_bridge_collector.config import CollectorConfig
 from wechat_bridge_collector.query_server import QueryMethodServer, dispatch_method
@@ -36,10 +38,14 @@ class BridgeRegistrationTest(unittest.TestCase):
             [method["name"] for method in captured["data"]["methods"]],
             [method["name"] for method in METHOD_DECLARATIONS],
         )
-        if "startCommand" in captured["data"]:
-            self.assertEqual(captured["data"]["startCommand"]["type"], "shell_command")
-            self.assertIn("launchctl kickstart", captured["data"]["startCommand"]["command"][-1])
+        self.assertEqual(captured["data"]["startCommand"], start_command())
         self.assertIn("messageReceived", [event["name"] for event in captured["data"]["events"]])
+
+    def test_start_command_uses_collector_cli(self):
+        command = start_command()
+        self.assertEqual(command["type"], "shell_command")
+        self.assertEqual(command["command"], [sys.executable, "-m", "wechat_bridge_collector", "start"])
+        self.assertEqual(command["timeoutSecs"], 20)
 
 
 class QueryServerTest(unittest.TestCase):

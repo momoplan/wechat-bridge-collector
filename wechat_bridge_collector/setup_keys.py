@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 import plistlib
-import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -64,7 +64,7 @@ def extract_wechat_keys(cfg: CollectorConfig, output_path: Path) -> None:
     env = os.environ.copy()
     env["WECHAT_DECRYPT_APP_DIR"] = str(wd_dir)
     result = subprocess.run(
-        [shutil.which("python3") or "python3", str(script)],
+        [sys.executable, str(script)],
         cwd=str(output_path.parent),
         env=env,
         text=True,

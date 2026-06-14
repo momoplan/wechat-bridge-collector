@@ -14,6 +14,9 @@ wechat-bridge-collector = "wechat_bridge_collector.app:main"
 [tool.setuptools]
 packages = ["wechat_bridge_collector"]
 
+[tool.setuptools.package-data]
+wechat_bridge_collector = ["scripts/windows/*.ps1", "scripts/macos/*.plist"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

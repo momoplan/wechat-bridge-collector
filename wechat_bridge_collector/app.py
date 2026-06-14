@@ -5,6 +5,7 @@ import json
 import sys
 import time
 
+from .autostart import install_autostart, result_json, start_collector, status
 from .bridge import BridgeClient
 from .config import CollectorConfig
 from .query_server import QueryMethodServer
@@ -71,6 +72,27 @@ def cmd_register(args: argparse.Namespace) -> int:
         print(f"register failed: HTTP {response.status}", file=sys.stderr)
         return 1
     return 0
+
+
+def cmd_install_autostart(args: argparse.Namespace) -> int:
+    cfg = _load_config(args)
+    result = install_autostart(cfg)
+    print(result_json(result))
+    return 0
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    cfg = _load_config(args)
+    result = start_collector(cfg)
+    print(result_json(result))
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    cfg = _load_config(args)
+    result = status(cfg)
+    print(result_json(result))
+    return 0 if result.status == "running" else 1
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -191,6 +213,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     register = sub.add_parser("register", help="register event declaration in bridge-agent")
     register.set_defaults(func=cmd_register)
+
+    install_autostart_parser = sub.add_parser(
+        "install-autostart",
+        help="install the platform-specific background launcher and login startup hook",
+    )
+    install_autostart_parser.set_defaults(func=cmd_install_autostart)
+
+    start = sub.add_parser("start", help="start the collector in the background and return")
+    start.set_defaults(func=cmd_start)
+
+    status_parser = sub.add_parser("status", help="check whether the local method server is healthy")
+    status_parser.set_defaults(func=cmd_status)
 
     run = sub.add_parser("run", help="run the collector loop")
     run.add_argument("--register", action="store_true", help="register service before running")

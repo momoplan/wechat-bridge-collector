@@ -104,6 +104,28 @@ wechat-bridge-collector --method-port 18083 run --register
 wechat-bridge-collector run --reset-state --backfill-seconds 300
 ```
 
+## 后台启动和自启
+
+collector 提供统一 CLI，内部按平台分发到独立脚本：
+
+```bash
+wechat-bridge-collector install-autostart
+wechat-bridge-collector start
+wechat-bridge-collector status
+```
+
+- Windows：渲染并执行 `wechat_bridge_collector/scripts/windows/start-collector.ps1`，同时写入当前用户 Startup 启动项。
+- macOS：渲染并加载 `wechat_bridge_collector/scripts/macos/com.baijimu.wechat-bridge-collector.plist`。
+- Linux：当前未提供自启集成。
+
+Bridge Agent 注册时的 `startCommand` 会统一指向：
+
+```bash
+python -m wechat_bridge_collector start
+```
+
+因此 `startCommand` 只负责触发后台启动并退出，不直接运行长期前台采集循环。
+
 ## 事件
 
 默认服务和事件名：
@@ -139,7 +161,7 @@ payload 示例：
 注册 payload 同时包含：
 
 - `healthCheck`：`GET /health`，供 Bridge Agent 小客户端展示采集器是否可用。
-- `startCommand`：macOS 下通过 LaunchAgent 触发 `com.baijimu.wechat-bridge-collector` 启动；Bridge Agent 只按注册字段执行，不内置 WeChat 采集器逻辑。
+- `startCommand`：通过 `wechat-bridge-collector start` 触发对应平台后台启动；Bridge Agent 只按注册字段执行，不内置 WeChat 采集器逻辑。
 
 - `getRecentSessions`：查询最近会话。
 - `getContacts`：搜索或列出联系人、群聊。

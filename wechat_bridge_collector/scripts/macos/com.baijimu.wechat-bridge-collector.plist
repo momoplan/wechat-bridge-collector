@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.baijimu.wechat-bridge-collector</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{PYTHON}}</string>
+    <string>-u</string>
+    <string>-m</string>
+    <string>wechat_bridge_collector</string>
+    <string>--config</string>
+    <string>{{CONFIG}}</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{{STDOUT}}</string>
+  <key>StandardErrorPath</key>
+  <string>{{STDERR}}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>
