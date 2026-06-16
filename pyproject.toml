@@ -1,6 +1,6 @@
 [project]
 name = "wechat-bridge-collector"
-version = "0.2.0"
+version = "0.2.1"
 description = "Cross-platform WeChat local message collector and query service for bridge-agent."
 requires-python = ">=3.10"
 dependencies = [
@@ -16,6 +16,9 @@ packages = ["wechat_bridge_collector"]
 
 [tool.setuptools.package-data]
 wechat_bridge_collector = ["scripts/windows/*.ps1", "scripts/macos/*.plist"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["setuptools>=68"]

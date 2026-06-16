@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "1.0",
+  "id": "com.baijimu.connector.wechat",
+  "name": "WeChat Connector",
+  "version": "0.2.1",
+  "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
+  "publisher": {
+    "name": "Baijimu",
+    "homepage": "https://baijimu.com"
+  },
+  "source": {
+    "type": "github",
+    "repo": "momoplan/wechat-bridge-collector",
+    "revision": "v0.2.1"
+  },
+  "runtime": {
+    "type": "process",
+    "command": "wechat-bridge-collector",
+    "args": ["start"],
+    "healthCheck": {
+      "type": "http",
+      "url": "http://127.0.0.1:18082/health",
+      "timeoutSecs": 2,
+      "expectStatus": 200
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "methodPort": {
+        "type": "integer",
+        "default": 18082,
+        "minimum": 1024,
+        "maximum": 65535
+      },
+      "includeText": {
+        "type": "boolean",
+        "default": true
+      },
+      "includeOutgoing": {
+        "type": "boolean",
+        "default": true
+      }
+    },
+    "additionalProperties": false
+  },
+  "remoteCapabilities": [
+    {
+      "name": "wechat.messages.read",
+      "risk": "high",
+      "description": "Read local WeChat message history after the user configures local database access."
+    },
+    {
+      "name": "wechat.messages.search",
+      "risk": "high",
+      "description": "Search local WeChat messages by keyword."
+    },
+    {
+      "name": "wechat.events.messageReceived",
+      "risk": "high",
+      "description": "Emit local WeChat message notifications through Baijimu Local."
+    }
+  ],
+  "serviceRegistrationFiles": ["service-registration.json"],
+  "hooks": {
+    "setup": "wechat-bridge-collector setup",
+    "probe": "wechat-bridge-collector probe",
+    "installAutostart": "wechat-bridge-collector install-autostart"
+  }
+}

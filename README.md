@@ -16,6 +16,25 @@ WeChat local DB/WAL
 
 collector 不直接连接 relay，也不修改微信数据。
 
+## 百积木 Local Connector 安装
+
+推荐通过百积木 Local 安装本仓库提供的 Connector，而不是让 AI skill 逐条执行安装命令。
+
+```bash
+bridge-agent connector install /path/to/wechat-bridge-collector --replace
+```
+
+安装器会读取 `connector.json`，再引用 `service-registration.json` 注册 `wechatLocal` 服务。标准安装机制成熟后，安装器应继续编排：
+
+- `wechat-bridge-collector setup`
+- `wechat-bridge-collector probe`
+- `wechat-bridge-collector install-autostart`
+- `wechat-bridge-collector start`
+- `wechat-bridge-collector register`
+- `GET http://127.0.0.1:18082/health`
+
+当前 README 保留下面的手工命令，主要用于调试、诊断和 legacy fallback。
+
 ## 前置条件
 
 1. 安装并运行 `bridge-agent`。
