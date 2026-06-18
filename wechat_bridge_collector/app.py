@@ -11,7 +11,7 @@ from .config import CollectorConfig
 from .query_server import QueryMethodServer
 from .setup_keys import setup_collector
 from .state import CollectorState
-from .wechat_source import WeChatSource
+from .wechat_source import DatabaseSnapshotError, WeChatSource
 
 
 def _load_config(args: argparse.Namespace) -> CollectorConfig:
@@ -172,6 +172,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                     print(f"emitted={emitted} changed_sessions={len(changed)}")
                     return 0
 
+                time.sleep(cfg.poll_interval_secs)
+            except DatabaseSnapshotError as exc:
+                print(f"snapshot failed: {exc}; state session markers were not advanced", file=sys.stderr)
+                state.save(cfg.state_path)
+                if args.once:
+                    return 1
                 time.sleep(cfg.poll_interval_secs)
             except KeyboardInterrupt:
                 print("collector stopped")

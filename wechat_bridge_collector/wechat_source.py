@@ -10,6 +10,7 @@ import sqlite3
 import struct
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from contextlib import closing
 from dataclasses import dataclass
@@ -76,13 +77,17 @@ class MessageCandidate:
     cursor: Cursor
 
 
+class DatabaseSnapshotError(RuntimeError):
+    """Raised when a consistent decrypted SQLite snapshot cannot be built."""
+
+
 class DBCache:
     def __init__(self, keys: dict[str, Any], db_dir: str):
         self.keys = keys
         self.db_dir = db_dir
         self.cache_dir = Path(tempfile.gettempdir()) / "wechat_bridge_collector_cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache: dict[str, tuple[float, float, str]] = {}
+        self._cache: dict[str, tuple[float, int, float, int, str]] = {}
 
     def get(self, rel_key: str) -> str | None:
         key_info = self._get_key_info(rel_key)
@@ -92,22 +97,70 @@ class DBCache:
         wal_path = Path(str(db_path) + "-wal")
         if not db_path.exists():
             return None
-        try:
-            db_mt = db_path.stat().st_mtime
-            wal_mt = wal_path.stat().st_mtime if wal_path.exists() else 0
-        except OSError:
+        signature = self._signature(db_path, wal_path)
+        if not signature:
             return None
         cached = self._cache.get(rel_key)
-        if cached and cached[0] == db_mt and cached[1] == wal_mt and Path(cached[2]).exists():
-            return cached[2]
+        if cached and cached[:4] == signature and Path(cached[4]).exists() and self._is_sqlite_healthy(cached[4]):
+            return cached[4]
 
         out_path = str(self.cache_dir / (hashlib.md5(rel_key.encode()).hexdigest()[:16] + ".db"))
         enc_key = bytes.fromhex(key_info["enc_key"])
-        full_decrypt(str(db_path), out_path, enc_key)
-        if wal_path.exists():
-            decrypt_wal(str(wal_path), out_path, enc_key)
-        self._cache[rel_key] = (db_mt, wal_mt, out_path)
-        return out_path
+        last_error: Exception | None = None
+        for attempt in range(3):
+            current_signature = self._signature(db_path, wal_path)
+            if not current_signature:
+                return None
+            tmp_path = str(self.cache_dir / f".{hashlib.md5(rel_key.encode()).hexdigest()[:16]}.{os.getpid()}.{attempt}.tmp")
+            try:
+                full_decrypt(str(db_path), tmp_path, enc_key)
+                if wal_path.exists():
+                    decrypt_wal(str(wal_path), tmp_path, enc_key)
+                after_signature = self._signature(db_path, wal_path)
+                if after_signature != current_signature:
+                    raise DatabaseSnapshotError("source database changed while building decrypted snapshot")
+                self._assert_sqlite_healthy(tmp_path)
+                os.replace(tmp_path, out_path)
+                self._cache[rel_key] = (*after_signature, out_path)
+                return out_path
+            except (OSError, sqlite3.Error, DatabaseSnapshotError) as exc:
+                last_error = exc
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                time.sleep(0.05)
+        raise DatabaseSnapshotError(f"failed to build healthy SQLite snapshot for {rel_key}: {last_error}")
+
+    @staticmethod
+    def _signature(db_path: Path, wal_path: Path) -> tuple[float, int, float, int] | None:
+        try:
+            db_stat = db_path.stat()
+            wal_stat = wal_path.stat() if wal_path.exists() else None
+        except OSError:
+            return None
+        return (
+            db_stat.st_mtime,
+            db_stat.st_size,
+            wal_stat.st_mtime if wal_stat else 0,
+            wal_stat.st_size if wal_stat else 0,
+        )
+
+    @staticmethod
+    def _assert_sqlite_healthy(path: str) -> None:
+        with closing(sqlite3.connect(path)) as conn:
+            row = conn.execute("PRAGMA quick_check").fetchone()
+        if not row or row[0] != "ok":
+            detail = row[0] if row else "no quick_check result"
+            raise DatabaseSnapshotError(f"SQLite quick_check failed: {detail}")
+
+    @classmethod
+    def _is_sqlite_healthy(cls, path: str) -> bool:
+        try:
+            cls._assert_sqlite_healthy(path)
+            return True
+        except (OSError, sqlite3.Error, DatabaseSnapshotError):
+            return False
 
     def _get_key_info(self, rel_path: str) -> dict[str, Any] | None:
         normalized = rel_path.replace("\\", "/")
