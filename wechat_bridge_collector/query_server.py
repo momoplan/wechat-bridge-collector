@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import unquote, urlparse
 
+from . import __version__
 from .config import CollectorConfig
 from .wechat_source import WeChatSource, normalize_limit
 
@@ -38,7 +39,7 @@ class QueryMethodServer:
         source = self.source
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "WeChatBridgeCollector/0.2"
+            server_version = f"WeChatBridgeCollector/{__version__}"
 
             def log_message(self, _format: str, *_args: Any) -> None:
                 return
