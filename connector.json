@@ -2,7 +2,7 @@
   "schemaVersion": "1.0",
   "id": "com.baijimu.connector.wechat",
   "name": "WeChat Connector",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
   "publisher": {
     "name": "Baijimu",
@@ -11,7 +11,7 @@
   "source": {
     "type": "github",
     "repo": "momoplan/wechat-bridge-collector",
-    "revision": "v0.2.3"
+    "revision": "v0.2.4"
   },
   "runtime": {
     "type": "process",

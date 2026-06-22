@@ -254,11 +254,10 @@
   "startCommand": {
     "type": "shell_command",
     "command": [
-      "/bin/sh",
-      "-lc",
-      "launchctl bootstrap gui/$(id -u) \"$HOME/Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist\" 2>/dev/null || true; launchctl kickstart -k gui/$(id -u)/com.baijimu.wechat-bridge-collector"
+      "wechat-bridge-collector",
+      "start"
     ],
-    "timeoutSecs": 15
+    "timeoutSecs": 20
   },
   "replace": true,
   "managed_by": "wechat-bridge-collector"

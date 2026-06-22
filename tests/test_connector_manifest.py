@@ -14,4 +14,9 @@ def test_connector_manifest_references_service_registration():
     registration = json.loads((ROOT / "service-registration.json").read_text(encoding="utf-8"))
     assert registration["name"] == "wechatLocal"
     assert registration["transport"]["type"] == "http"
+    assert registration["startCommand"] == {
+        "type": "shell_command",
+        "command": ["wechat-bridge-collector", "start"],
+        "timeoutSecs": 20,
+    }
     assert registration["events"][0]["name"] == "messageReceived"
