@@ -56,18 +56,19 @@
     },
     {
       "name": "getChatHistory",
-      "description": "Read paginated message history for one WeChat conversation.",
+      "description": "Read paginated message history for one WeChat conversation by conversationId.",
       "path": "/invoke/getChatHistory",
       "httpMethod": "POST",
       "timeoutSecs": 60,
       "input_schema": {
         "type": "object",
         "required": [
-          "chat"
+          "conversationId"
         ],
         "properties": {
-          "chat": {
-            "type": "string"
+          "conversationId": {
+            "type": "string",
+            "description": "WeChat conversation username from event payload.conversationId or getRecentSessions.conversationId."
           },
           "limit": {
             "type": "integer",
@@ -117,9 +118,10 @@
           "keyword": {
             "type": "string"
           },
-          "chat": {
+          "conversationId": {
             "type": "string",
-            "default": ""
+            "default": "",
+            "description": "Optional WeChat conversation username. Empty searches all conversations."
           },
           "limit": {
             "type": "integer",
@@ -172,11 +174,12 @@
       "input_schema": {
         "type": "object",
         "required": [
-          "chat"
+          "conversationId"
         ],
         "properties": {
-          "chat": {
-            "type": "string"
+          "conversationId": {
+            "type": "string",
+            "description": "WeChat conversation username from event payload.conversationId or getRecentSessions.conversationId."
           },
           "limit": {
             "type": "integer",
@@ -210,11 +213,12 @@
       "input_schema": {
         "type": "object",
         "required": [
-          "chat"
+          "conversationId"
         ],
         "properties": {
-          "chat": {
-            "type": "string"
+          "conversationId": {
+            "type": "string",
+            "description": "WeChat conversation username from event payload.conversationId or getRecentSessions.conversationId."
           },
           "limit": {
             "type": "integer",
@@ -247,7 +251,113 @@
       "enabled": true,
       "payload_schema": {
         "type": "object",
-        "additionalProperties": true
+        "description": "Payload emitted for each WeChat message observed in the local database.",
+        "required": [
+          "messageId",
+          "dbPath",
+          "tableName",
+          "localId",
+          "conversationId",
+          "conversationName",
+          "isGroup",
+          "senderId",
+          "senderName",
+          "direction",
+          "messageType",
+          "messageTypeLabel",
+          "timestamp",
+          "occurredAt",
+          "source",
+          "platform"
+        ],
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Stable collector message ID formatted as dbPath:tableName:localId."
+          },
+          "dbPath": {
+            "type": "string",
+            "description": "Relative decrypted WeChat database path used by the collector."
+          },
+          "tableName": {
+            "type": "string",
+            "description": "WeChat message table where the record was read."
+          },
+          "localId": {
+            "type": "integer",
+            "description": "Local message primary key in the source table."
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "WeChat conversation username. Use this with getChatHistory/searchMessages."
+          },
+          "conversationName": {
+            "type": "string",
+            "description": "Best-effort display name for the conversation."
+          },
+          "isGroup": {
+            "type": "boolean",
+            "description": "Whether the conversation is a WeChat group chat."
+          },
+          "senderId": {
+            "type": "string",
+            "description": "Sender WeChat username when resolvable; empty for system/unknown senders."
+          },
+          "senderName": {
+            "type": "string",
+            "description": "Best-effort sender display name resolved from local contacts."
+          },
+          "direction": {
+            "type": "string",
+            "description": "Message direction relative to the current local WeChat account. Group-chat direction can be unknown.",
+            "enum": ["incoming", "outgoing", "unknown"]
+          },
+          "messageType": {
+            "type": "string",
+            "description": "Normalized message type inferred from WeChat local_type.",
+            "enum": [
+              "text",
+              "image",
+              "voice",
+              "contact_card",
+              "video",
+              "sticker",
+              "location",
+              "app",
+              "call",
+              "system",
+              "recall",
+              "unknown"
+            ]
+          },
+          "messageTypeLabel": {
+            "type": "string",
+            "description": "Human-readable label for messageType or the raw local_type fallback."
+          },
+          "timestamp": {
+            "type": "integer",
+            "description": "Message create time as Unix timestamp seconds."
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Message create time in ISO 8601 UTC format."
+          },
+          "source": {
+            "type": "string",
+            "description": "Origin of the event payload.",
+            "enum": ["wechat-local-db"]
+          },
+          "platform": {
+            "type": "string",
+            "description": "Lowercase platform name reported by the local collector, for example darwin, windows, or linux."
+          },
+          "text": {
+            "type": "string",
+            "description": "Best-effort message text or type placeholder. Present only when includeText is enabled."
+          }
+        },
+        "additionalProperties": false
       }
     }
   ],

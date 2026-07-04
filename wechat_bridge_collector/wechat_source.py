@@ -88,6 +88,8 @@ class DBCache:
         self.cache_dir = Path(tempfile.gettempdir()) / "wechat_bridge_collector_cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, tuple[float, int, float, int, str]] = {}
+        self._metadata_path = self.cache_dir / "_snapshots.json"
+        self._load_persistent_cache()
 
     def get(self, rel_key: str) -> str | None:
         key_info = self._get_key_info(rel_key)
@@ -101,10 +103,10 @@ class DBCache:
         if not signature:
             return None
         cached = self._cache.get(rel_key)
-        if cached and cached[:4] == signature and Path(cached[4]).exists() and self._is_sqlite_healthy(cached[4]):
+        if cached and cached[:4] == signature and Path(cached[4]).exists():
             return cached[4]
 
-        out_path = str(self.cache_dir / (hashlib.md5(rel_key.encode()).hexdigest()[:16] + ".db"))
+        out_path = str(self.cache_dir / (hashlib.md5(f"{self.db_dir}:{rel_key}".encode()).hexdigest()[:16] + ".db"))
         enc_key = bytes.fromhex(key_info["enc_key"])
         last_error: Exception | None = None
         for attempt in range(3):
@@ -122,6 +124,7 @@ class DBCache:
                 self._assert_sqlite_healthy(tmp_path)
                 os.replace(tmp_path, out_path)
                 self._cache[rel_key] = (*after_signature, out_path)
+                self._save_persistent_cache()
                 return out_path
             except (OSError, sqlite3.Error, DatabaseSnapshotError) as exc:
                 last_error = exc
@@ -131,6 +134,58 @@ class DBCache:
                     pass
                 time.sleep(0.05)
         raise DatabaseSnapshotError(f"failed to build healthy SQLite snapshot for {rel_key}: {last_error}")
+
+    def source_signature(self, rel_key: str) -> tuple[float, int, float, int] | None:
+        db_path = Path(self.db_dir) / rel_key.replace("\\", os.sep).replace("/", os.sep)
+        wal_path = Path(str(db_path) + "-wal")
+        if not db_path.exists():
+            return None
+        return self._signature(db_path, wal_path)
+
+    def _load_persistent_cache(self) -> None:
+        try:
+            raw = json.loads(self._metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(raw, dict):
+            return
+        for rel_key, item in raw.items():
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "")
+            if not path or not Path(path).exists():
+                continue
+            signature = item.get("signature")
+            if not isinstance(signature, list) or len(signature) != 4:
+                continue
+            try:
+                self._cache[str(rel_key)] = (
+                    float(signature[0]),
+                    int(signature[1]),
+                    float(signature[2]),
+                    int(signature[3]),
+                    path,
+                )
+            except (TypeError, ValueError):
+                continue
+
+    def _save_persistent_cache(self) -> None:
+        data = {
+            rel_key: {
+                "signature": [db_mtime, db_size, wal_mtime, wal_size],
+                "path": path,
+            }
+            for rel_key, (db_mtime, db_size, wal_mtime, wal_size, path) in self._cache.items()
+        }
+        tmp_path = self._metadata_path.with_suffix(".tmp")
+        try:
+            tmp_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp_path, self._metadata_path)
+        except OSError:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
     @staticmethod
     def _signature(db_path: Path, wal_path: Path) -> tuple[float, int, float, int] | None:
@@ -207,6 +262,13 @@ class WeChatSource:
         self.decrypted_dir = self.runtime["decrypted_dir"]
         self.cache = DBCache(self.all_keys, self.db_dir)
         self.msg_db_keys = find_msg_db_keys(self.all_keys)
+        self._contacts_cache: tuple[tuple[float, int] | None, list[dict[str, Any]]] | None = None
+        self._contact_names_cache: tuple[tuple[float, int] | None, dict[str, str]] | None = None
+        self._session_state_cache: tuple[tuple[float, int] | None, dict[str, int]] | None = None
+        self._message_tables_cache: dict[str, tuple[tuple[tuple[str, tuple[float, int] | None], ...], list[tuple[str, str, str]]]] = {}
+        self._message_tables_index_path = self.cache.cache_dir / (
+            hashlib.md5(f"{self.db_dir}:message-table-index".encode()).hexdigest()[:16] + ".json"
+        )
 
     def probe(self) -> dict[str, Any]:
         names = self.contact_names()
@@ -232,47 +294,68 @@ class WeChatSource:
         }
 
     def contact_names(self) -> dict[str, str]:
-        return {
+        contacts, signature = self._all_contacts()
+        cached = self._contact_names_cache
+        if cached and cached[0] == signature:
+            return cached[1]
+        names = {
             row["username"]: row["displayName"]
-            for row in self.contacts(limit=100_000)
+            for row in contacts
             if row.get("username")
         }
+        self._contact_names_cache = (signature, names)
+        return names
 
     def contacts(self, query: str = "", limit: int = 50) -> list[dict[str, Any]]:
+        all_contacts, _signature = self._all_contacts()
+        query_l = query.strip().lower()
+        contacts = []
+        for item in all_contacts:
+            if query_l and not any(
+                query_l in str(value or "").lower()
+                for value in (item["username"], item["displayName"], item["nickName"], item["remark"])
+            ):
+                continue
+            contacts.append(dict(item))
+        contacts.sort(key=lambda item: (not item["remark"], item["displayName"].lower()))
+        return contacts[:normalize_limit(limit, 100_000)]
+
+    def _all_contacts(self) -> tuple[list[dict[str, Any]], tuple[float, int] | None]:
         path = self.cache.get(os.path.join("contact", "contact.db"))
         if not path:
-            return []
+            return [], None
+        signature = file_signature(path)
+        cached = self._contacts_cache
+        if cached and cached[0] == signature:
+            return cached[1], signature
         with closing(sqlite3.connect(path)) as conn:
             try:
                 rows = conn.execute("SELECT username, nick_name, remark FROM contact").fetchall()
             except sqlite3.Error:
-                return []
-        query_l = query.strip().lower()
+                return [], signature
         contacts = []
         for username, nick, remark in rows:
             if not username:
                 continue
             display = remark or nick or username
-            item = {
+            contacts.append({
                 "username": username,
                 "displayName": display,
                 "nickName": nick or "",
                 "remark": remark or "",
                 "isGroup": "@chatroom" in username,
-            }
-            if query_l and not any(
-                query_l in str(value or "").lower()
-                for value in (username, display, nick, remark)
-            ):
-                continue
-            contacts.append(item)
-        contacts.sort(key=lambda item: (not item["remark"], item["displayName"].lower()))
-        return contacts[:normalize_limit(limit, 100_000)]
+            })
+        self._contacts_cache = (signature, contacts)
+        return contacts, signature
 
     def read_session_state(self) -> dict[str, int]:
         path = self.cache.get(os.path.join("session", "session.db"))
         if not path:
             return {}
+        signature = file_signature(path)
+        cached = self._session_state_cache
+        if cached and cached[0] == signature:
+            return dict(cached[1])
         with closing(sqlite3.connect(path)) as conn:
             rows = conn.execute(
                 """
@@ -281,7 +364,9 @@ class WeChatSource:
                 WHERE last_timestamp > 0
                 """
             ).fetchall()
-        return {username: int(ts or 0) for username, ts in rows if username}
+        state = {username: int(ts or 0) for username, ts in rows if username}
+        self._session_state_cache = (signature, state)
+        return dict(state)
 
     def recent_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
         path = self.cache.get(os.path.join("session", "session.db"))
@@ -382,7 +467,7 @@ class WeChatSource:
 
     def get_chat_history(
         self,
-        chat: str,
+        conversation_id: str,
         limit: int = 50,
         offset: int = 0,
         start_time: Any = "",
@@ -390,9 +475,8 @@ class WeChatSource:
         oldest_first: bool = False,
         message_types: list[str] | None = None,
     ) -> dict[str, Any]:
-        ctx = self.resolve_chat(chat)
-        if not ctx:
-            raise ValueError(f"找不到聊天对象: {chat}")
+        ctx = self.conversation_context(conversation_id)
+        self.require_message_tables(ctx["conversationId"])
         type_filter = resolve_type_filter(message_types)
         start_ts, end_ts = parse_time_range(start_time, end_time)
         messages = self._query_messages_for_username(
@@ -415,7 +499,7 @@ class WeChatSource:
     def search_messages(
         self,
         keyword: str,
-        chat: str = "",
+        conversation_id: str = "",
         limit: int = 20,
         offset: int = 0,
         start_time: Any = "",
@@ -425,10 +509,9 @@ class WeChatSource:
         if not keyword:
             raise ValueError("keyword 不能为空")
         start_ts, end_ts = parse_time_range(start_time, end_time)
-        if str(chat or "").strip():
-            ctx = self.resolve_chat(chat)
-            if not ctx:
-                raise ValueError(f"找不到聊天对象: {chat}")
+        if str(conversation_id or "").strip():
+            ctx = self.conversation_context(conversation_id)
+            self.require_message_tables(ctx["conversationId"])
             usernames = [ctx["conversationId"]]
         else:
             ctx = None
@@ -490,9 +573,9 @@ class WeChatSource:
         candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username)
         return candidate.payload if candidate else None
 
-    def get_chat_images(self, chat: str, limit: int = 20, offset: int = 0, start_time: Any = "", end_time: Any = "") -> dict[str, Any]:
+    def get_chat_images(self, conversation_id: str, limit: int = 20, offset: int = 0, start_time: Any = "", end_time: Any = "") -> dict[str, Any]:
         return self.get_chat_history(
-            chat,
+            conversation_id,
             limit=limit,
             offset=offset,
             start_time=start_time,
@@ -501,9 +584,9 @@ class WeChatSource:
             message_types=["image"],
         )
 
-    def get_voice_messages(self, chat: str, limit: int = 20, offset: int = 0, start_time: Any = "", end_time: Any = "") -> dict[str, Any]:
+    def get_voice_messages(self, conversation_id: str, limit: int = 20, offset: int = 0, start_time: Any = "", end_time: Any = "") -> dict[str, Any]:
         return self.get_chat_history(
-            chat,
+            conversation_id,
             limit=limit,
             offset=offset,
             start_time=start_time,
@@ -512,39 +595,34 @@ class WeChatSource:
             message_types=["voice"],
         )
 
-    def resolve_chat(self, query: str) -> dict[str, Any] | None:
-        query = str(query or "").strip()
-        if not query:
-            return None
+    def conversation_context(self, conversation_id: str) -> dict[str, Any]:
+        conversation_id = str(conversation_id or "").strip()
+        if not conversation_id:
+            raise ValueError("conversationId 不能为空")
         names = self.contact_names()
-        candidates = []
-        for username in self.known_conversation_ids():
-            display = names.get(username, username)
-            item = {
-                "conversationId": username,
-                "conversationName": display,
-                "isGroup": "@chatroom" in username,
-            }
-            candidates.append(item)
-        query_l = query.lower()
-        for item in candidates:
-            if item["conversationId"].lower() == query_l:
-                return item
-        for item in candidates:
-            if item["conversationName"].lower() == query_l:
-                return item
-        for item in candidates:
-            if query_l in item["conversationName"].lower() or query_l in item["conversationId"].lower():
-                return item
-        return None
+        return {
+            "conversationId": conversation_id,
+            "conversationName": names.get(conversation_id, conversation_id),
+            "isGroup": "@chatroom" in conversation_id,
+        }
+
+    def require_message_tables(self, conversation_id: str) -> None:
+        if not self._message_tables_for_username(conversation_id):
+            raise ValueError(f"找不到会话消息表: {conversation_id}")
 
     def known_conversation_ids(self) -> list[str]:
         usernames = set(self.read_session_state())
-        usernames.update(row["username"] for row in self.contacts(limit=100_000))
+        contacts, _signature = self._all_contacts()
+        usernames.update(row["username"] for row in contacts)
         return sorted(username for username in usernames if username)
 
     def _message_tables_for_username(self, username: str) -> list[tuple[str, str, str]]:
         table_name = "Msg_" + hashlib.md5(username.encode()).hexdigest()
+        signature = self._message_table_index_signature()
+        self._load_message_tables_cache(signature)
+        cached = self._message_tables_cache.get(username)
+        if cached and cached[0] == signature:
+            return list(cached[1])
         matches = []
         for rel_key in self.msg_db_keys:
             path = self.cache.get(rel_key)
@@ -560,7 +638,59 @@ class WeChatSource:
                     matches.append((rel_key, table_name, path))
             except sqlite3.Error:
                 continue
+        self._message_tables_cache[username] = (signature, matches)
+        self._save_message_tables_cache(signature)
         return matches
+
+    def _message_table_index_signature(self) -> tuple[tuple[str, tuple[float, int] | None], ...]:
+        return tuple((rel_key, source_db_file_signature(self.db_dir, rel_key)) for rel_key in self.msg_db_keys)
+
+    def _load_message_tables_cache(self, signature: tuple[tuple[str, tuple[float, int] | None], ...]) -> None:
+        if self._message_tables_cache:
+            return
+        try:
+            raw = json.loads(self._message_tables_index_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if decode_message_table_signature(raw.get("signature")) != signature:
+            return
+        users = raw.get("users")
+        if not isinstance(users, dict):
+            return
+        loaded: dict[str, tuple[tuple[tuple[str, tuple[float, int] | None], ...], list[tuple[str, str, str]]]] = {}
+        for username, entries in users.items():
+            if not isinstance(entries, list):
+                continue
+            matches = []
+            for entry in entries:
+                if (
+                    isinstance(entry, list)
+                    and len(entry) == 3
+                    and all(isinstance(value, str) for value in entry)
+                ):
+                    matches.append((entry[0], entry[1], entry[2]))
+            loaded[str(username)] = (signature, matches)
+        self._message_tables_cache = loaded
+
+    def _save_message_tables_cache(self, signature: tuple[tuple[str, tuple[float, int] | None], ...]) -> None:
+        users = {
+            username: [list(entry) for entry in matches]
+            for username, (cached_signature, matches) in self._message_tables_cache.items()
+            if cached_signature == signature
+        }
+        data = {
+            "signature": encode_message_table_signature(signature),
+            "users": users,
+        }
+        tmp_path = self._message_tables_index_path.with_suffix(".tmp")
+        try:
+            tmp_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp_path, self._message_tables_index_path)
+        except OSError:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
     def _query_messages_for_username(
         self,
@@ -933,6 +1063,50 @@ def parse_message_id(message_id: str) -> tuple[str, str, int]:
 def has_column(conn: sqlite3.Connection, table_name: str, column: str) -> bool:
     rows = conn.execute(f"PRAGMA table_info([{table_name}])").fetchall()
     return any(row[1] == column for row in rows)
+
+
+def file_signature(path: str) -> tuple[float, int] | None:
+    try:
+        stat = Path(path).stat()
+    except OSError:
+        return None
+    return stat.st_mtime, stat.st_size
+
+
+def source_db_file_signature(db_dir: str, rel_key: str) -> tuple[float, int] | None:
+    path = Path(db_dir) / rel_key.replace("\\", os.sep).replace("/", os.sep)
+    return file_signature(str(path))
+
+
+def encode_message_table_signature(
+    signature: tuple[tuple[str, tuple[float, int] | None], ...],
+) -> list[list[Any]]:
+    return [
+        [rel_key, [db_sig[0], db_sig[1]] if db_sig else None]
+        for rel_key, db_sig in signature
+    ]
+
+
+def decode_message_table_signature(raw: Any) -> tuple[tuple[str, tuple[float, int] | None], ...] | None:
+    if not isinstance(raw, list):
+        return None
+    decoded = []
+    for item in raw:
+        if not isinstance(item, list) or len(item) != 2 or not isinstance(item[0], str):
+            return None
+        rel_key = item[0]
+        sig_raw = item[1]
+        if sig_raw is None:
+            db_sig = None
+        elif isinstance(sig_raw, list) and len(sig_raw) == 2:
+            try:
+                db_sig = (float(sig_raw[0]), int(sig_raw[1]))
+            except (TypeError, ValueError):
+                return None
+        else:
+            return None
+        decoded.append((rel_key, db_sig))
+    return tuple(decoded)
 
 
 def decompress_content(content: Any, ct: Any) -> str | None:

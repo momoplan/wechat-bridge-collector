@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from wechat_bridge_collector.bridge import MESSAGE_EVENT_PAYLOAD_SCHEMA
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,3 +22,6 @@ def test_connector_manifest_references_service_registration():
         "timeoutSecs": 20,
     }
     assert registration["events"][0]["name"] == "messageReceived"
+    assert registration["events"][0]["payload_schema"] == MESSAGE_EVENT_PAYLOAD_SCHEMA
+    assert "conversationId" in registration["events"][0]["payload_schema"]["properties"]
+    assert "senderName" in registration["events"][0]["payload_schema"]["properties"]

@@ -195,7 +195,7 @@ payload 示例：
 ```bash
 curl -s http://127.0.0.1:18082/invoke/getChatHistory \
   -H 'Content-Type: application/json' \
-  -d '{"chat":"文件传输助手","limit":20}'
+  -d '{"conversationId":"filehelper","limit":20}'
 ```
 
 返回体统一为：

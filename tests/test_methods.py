@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 
 from wechat_bridge_collector.autostart import start_command
-from wechat_bridge_collector.bridge import BridgeClient, METHOD_DECLARATIONS
+from wechat_bridge_collector.bridge import BridgeClient, MESSAGE_EVENT_PAYLOAD_SCHEMA, METHOD_DECLARATIONS
 from wechat_bridge_collector.config import CollectorConfig
 from wechat_bridge_collector.query_server import QueryMethodServer, dispatch_method
 from wechat_bridge_collector.wechat_source import parse_message_id, parse_time_range, resolve_type_filter
@@ -40,6 +40,7 @@ class BridgeRegistrationTest(unittest.TestCase):
         )
         self.assertEqual(captured["data"]["startCommand"], start_command())
         self.assertIn("messageReceived", [event["name"] for event in captured["data"]["events"]])
+        self.assertEqual(captured["data"]["events"][0]["payload_schema"], MESSAGE_EVENT_PAYLOAD_SCHEMA)
 
     def test_start_command_uses_collector_cli(self):
         command = start_command()

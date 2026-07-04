@@ -42,15 +42,15 @@ METHOD_DECLARATIONS: list[dict[str, Any]] = [
     },
     {
         "name": "getChatHistory",
-        "description": "Read paginated message history for one WeChat conversation.",
+        "description": "Read paginated message history for one WeChat conversation by conversationId.",
         "path": "/invoke/getChatHistory",
         "httpMethod": "POST",
         "timeoutSecs": 60,
         "input_schema": {
             "type": "object",
-            "required": ["chat"],
+            "required": ["conversationId"],
             "properties": {
-                "chat": {"type": "string", "description": "Conversation name, remark, group name, or wxid."},
+                "conversationId": {"type": "string", "description": "WeChat conversation username from event payload.conversationId or getRecentSessions.conversationId."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
                 "startTime": {"type": "string", "default": ""},
@@ -72,7 +72,7 @@ METHOD_DECLARATIONS: list[dict[str, Any]] = [
             "required": ["keyword"],
             "properties": {
                 "keyword": {"type": "string"},
-                "chat": {"type": "string", "default": ""},
+                "conversationId": {"type": "string", "default": "", "description": "Optional WeChat conversation username. Empty searches all conversations."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
                 "startTime": {"type": "string", "default": ""},
@@ -102,9 +102,9 @@ METHOD_DECLARATIONS: list[dict[str, Any]] = [
         "timeoutSecs": 60,
         "input_schema": {
             "type": "object",
-            "required": ["chat"],
+            "required": ["conversationId"],
             "properties": {
-                "chat": {"type": "string"},
+                "conversationId": {"type": "string", "description": "WeChat conversation username from event payload.conversationId or getRecentSessions.conversationId."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
                 "startTime": {"type": "string", "default": ""},
@@ -121,9 +121,9 @@ METHOD_DECLARATIONS: list[dict[str, Any]] = [
         "timeoutSecs": 60,
         "input_schema": {
             "type": "object",
-            "required": ["chat"],
+            "required": ["conversationId"],
             "properties": {
-                "chat": {"type": "string"},
+                "conversationId": {"type": "string", "description": "WeChat conversation username from event payload.conversationId or getRecentSessions.conversationId."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
                 "startTime": {"type": "string", "default": ""},
@@ -133,6 +133,117 @@ METHOD_DECLARATIONS: list[dict[str, Any]] = [
         },
     },
 ]
+
+MESSAGE_EVENT_PAYLOAD_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": "Payload emitted for each WeChat message observed in the local database.",
+    "required": [
+        "messageId",
+        "dbPath",
+        "tableName",
+        "localId",
+        "conversationId",
+        "conversationName",
+        "isGroup",
+        "senderId",
+        "senderName",
+        "direction",
+        "messageType",
+        "messageTypeLabel",
+        "timestamp",
+        "occurredAt",
+        "source",
+        "platform",
+    ],
+    "properties": {
+        "messageId": {
+            "type": "string",
+            "description": "Stable collector message ID formatted as dbPath:tableName:localId.",
+        },
+        "dbPath": {
+            "type": "string",
+            "description": "Relative decrypted WeChat database path used by the collector.",
+        },
+        "tableName": {
+            "type": "string",
+            "description": "WeChat message table where the record was read.",
+        },
+        "localId": {
+            "type": "integer",
+            "description": "Local message primary key in the source table.",
+        },
+        "conversationId": {
+            "type": "string",
+            "description": "WeChat conversation username. Use this with getChatHistory/searchMessages.",
+        },
+        "conversationName": {
+            "type": "string",
+            "description": "Best-effort display name for the conversation.",
+        },
+        "isGroup": {
+            "type": "boolean",
+            "description": "Whether the conversation is a WeChat group chat.",
+        },
+        "senderId": {
+            "type": "string",
+            "description": "Sender WeChat username when resolvable; empty for system/unknown senders.",
+        },
+        "senderName": {
+            "type": "string",
+            "description": "Best-effort sender display name resolved from local contacts.",
+        },
+        "direction": {
+            "type": "string",
+            "description": "Message direction relative to the current local WeChat account. Group-chat direction can be unknown.",
+            "enum": ["incoming", "outgoing", "unknown"],
+        },
+        "messageType": {
+            "type": "string",
+            "description": "Normalized message type inferred from WeChat local_type.",
+            "enum": [
+                "text",
+                "image",
+                "voice",
+                "contact_card",
+                "video",
+                "sticker",
+                "location",
+                "app",
+                "call",
+                "system",
+                "recall",
+                "unknown",
+            ],
+        },
+        "messageTypeLabel": {
+            "type": "string",
+            "description": "Human-readable label for messageType or the raw local_type fallback.",
+        },
+        "timestamp": {
+            "type": "integer",
+            "description": "Message create time as Unix timestamp seconds.",
+        },
+        "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Message create time in ISO 8601 UTC format.",
+        },
+        "source": {
+            "type": "string",
+            "description": "Origin of the event payload.",
+            "enum": ["wechat-local-db"],
+        },
+        "platform": {
+            "type": "string",
+            "description": "Lowercase platform name reported by the local collector, for example darwin, windows, or linux.",
+        },
+        "text": {
+            "type": "string",
+            "description": "Best-effort message text or type placeholder. Present only when includeText is enabled.",
+        },
+    },
+    "additionalProperties": False,
+}
 
 
 @dataclass
@@ -186,10 +297,7 @@ class BridgeClient:
                     "name": self.config.event_name,
                     "description": "Emitted when a local WeChat message is observed.",
                     "enabled": True,
-                    "payload_schema": {
-                        "type": "object",
-                        "additionalProperties": True,
-                    },
+                    "payload_schema": MESSAGE_EVENT_PAYLOAD_SCHEMA,
                 }
             ],
             "replace": True,

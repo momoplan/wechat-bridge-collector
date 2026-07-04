@@ -112,7 +112,7 @@ def dispatch_method(source: WeChatSource, method: str, payload: dict[str, Any]) 
             "limit": normalize_limit(p.get("limit", 50), 500),
         },
         "getChatHistory": lambda p: source.get_chat_history(
-            require_string(p, "chat"),
+            require_string(p, "conversationId"),
             limit=p.get("limit", 50),
             offset=p.get("offset", 0),
             start_time=p.get("startTime") or p.get("start_time") or "",
@@ -122,7 +122,7 @@ def dispatch_method(source: WeChatSource, method: str, payload: dict[str, Any]) 
         ),
         "searchMessages": lambda p: source.search_messages(
             require_string(p, "keyword"),
-            chat=str(p.get("chat") or ""),
+            conversation_id=str(p.get("conversationId") or ""),
             limit=p.get("limit", 20),
             offset=p.get("offset", 0),
             start_time=p.get("startTime") or p.get("start_time") or "",
@@ -130,14 +130,14 @@ def dispatch_method(source: WeChatSource, method: str, payload: dict[str, Any]) 
         ),
         "getMessageById": lambda p: {"message": source.get_message_by_id(require_string(p, "messageId"))},
         "getChatImages": lambda p: source.get_chat_images(
-            require_string(p, "chat"),
+            require_string(p, "conversationId"),
             limit=p.get("limit", 20),
             offset=p.get("offset", 0),
             start_time=p.get("startTime") or p.get("start_time") or "",
             end_time=p.get("endTime") or p.get("end_time") or "",
         ),
         "getVoiceMessages": lambda p: source.get_voice_messages(
-            require_string(p, "chat"),
+            require_string(p, "conversationId"),
             limit=p.get("limit", 20),
             offset=p.get("offset", 0),
             start_time=p.get("startTime") or p.get("start_time") or "",
