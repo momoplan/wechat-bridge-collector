@@ -2,6 +2,8 @@
 
 跨平台微信本地消息采集器和只读查询服务。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 的 key 提取能力，然后把新消息作为 bridge-agent 事件广播出去，同时向 bridge-agent 注册本机 HTTP methods 用于查询最近会话、联系人、聊天记录和消息搜索。
 
+官方市场包从 `0.3.0` 起内置 Rust 原生入口 `bin/<os>-<arch>/wechat-bridge-collector`，Bridge Agent 安装时会优先使用该入口。仓库里的 Python 实现保留为兼容参考，不再是官方市场运行路径。
+
 ## 架构
 
 ```text
@@ -70,10 +72,10 @@ macOS 首次提取 key 可能需要管理员权限；如果系统拦截 `task_fo
 
 ## 本机运行
 
-安装 collector：
+从源码构建 collector：
 
 ```bash
-pip install .
+cargo build --release
 ```
 
 验证读取链路：
