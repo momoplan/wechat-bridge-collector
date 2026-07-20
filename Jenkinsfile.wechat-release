@@ -40,12 +40,11 @@ case "$MIN_BRIDGE_VERSION" in *[!0-9.]*|'') exit 1 ;; esac
             steps {
                 sh '''#!/bin/bash
 set -euo pipefail
-release_venv="$WORKSPACE/.release-venv"
-case "$release_venv" in "$WORKSPACE"/*) ;; *) exit 1 ;; esac
-trap 'rm -rf -- "$release_venv"' EXIT
-python3 -m venv "$release_venv"
-"$release_venv/bin/python" -m pip install --disable-pip-version-check . pytest
-"$release_venv/bin/python" -m pytest -q
+release_python="$WORKSPACE/.release-python"
+case "$release_python" in "$WORKSPACE"/*) ;; *) exit 1 ;; esac
+trap 'rm -rf -- "$release_python"' EXIT
+python3 -m pip install --disable-pip-version-check --target "$release_python" . pytest
+PYTHONPATH="$release_python:$WORKSPACE" python3 -m pytest -q
 python3 -m py_compile wechat_bridge_collector/*.py
 bash -n agent-skill/scripts/setup_macos.sh
 jq -e . connector.json >/dev/null
