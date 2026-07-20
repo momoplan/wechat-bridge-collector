@@ -23,7 +23,8 @@
       <configVersion>2</configVersion>
       <userRemoteConfigs>
         <hudson.plugins.git.UserRemoteConfig>
-          <url>https://github.com/momoplan/wechat-bridge-collector.git</url>
+          <url>https://gitee.com/zxflimit_admin/wechat-bridge-collector.git</url>
+          <credentialsId>bd5fa0ff-2186-41e4-a7aa-97937ef32c02</credentialsId>
         </hudson.plugins.git.UserRemoteConfig>
       </userRemoteConfigs>
       <branches><hudson.plugins.git.BranchSpec><name>*/${SOURCE_REF}</name></hudson.plugins.git.BranchSpec></branches>

@@ -62,22 +62,28 @@ jq -e . service-registration.json >/dev/null
                 expression { return !params.DRY_RUN }
             }
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'github-momoplan-token',
-                    usernameVariable: 'GITHUB_USER',
-                    passwordVariable: 'GITHUB_TOKEN'
-                )]) {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github-momoplan-token',
+                        usernameVariable: 'GITHUB_USER',
+                        passwordVariable: 'GITHUB_TOKEN'
+                    ),
+                    usernamePassword(
+                        credentialsId: 'bd5fa0ff-2186-41e4-a7aa-97937ef32c02',
+                        usernameVariable: 'GITEE_USER',
+                        passwordVariable: 'GITEE_TOKEN'
+                    )
+                ]) {
                     sh '''#!/bin/bash
 set -euo pipefail
 set +x
-remote="https://github.com/momoplan/wechat-bridge-collector.git"
 askpass="$WORKSPACE/.wechat-release-git-askpass.sh"
 trap 'rm -f "$askpass"' EXIT
 cat > "$askpass" <<'ASKPASS'
 #!/bin/sh
 case "$1" in
-  *Username*) printf '%s\n' "$GITHUB_USER" ;;
-  *Password*) printf '%s\n' "$GITHUB_TOKEN" ;;
+  *Username*) printf '%s\n' "$GIT_AUTH_USER" ;;
+  *Password*) printf '%s\n' "$GIT_AUTH_PASSWORD" ;;
   *) exit 1 ;;
 esac
 ASKPASS
@@ -85,20 +91,30 @@ chmod 700 "$askpass"
 export GIT_ASKPASS="$askpass"
 export GIT_TERMINAL_PROMPT=0
 
-current_main="$(git ls-remote "$remote" refs/heads/main | awk 'NR == 1 {print $1}')"
-if [ -n "$current_main" ] && ! git merge-base --is-ancestor "$current_main" "$SOURCE_COMMIT"; then
-  echo "refusing non-fast-forward publish to main" >&2
-  exit 1
-fi
-git push "$remote" "$SOURCE_COMMIT:refs/heads/main"
+publish_remote() {
+  remote="$1"
+  current_main="$(git ls-remote "$remote" refs/heads/main | awk 'NR == 1 {print $1}')"
+  if [ -n "$current_main" ] && ! git merge-base --is-ancestor "$current_main" "$SOURCE_COMMIT"; then
+    echo "refusing non-fast-forward publish to main on $remote" >&2
+    exit 1
+  fi
+  git push "$remote" "$SOURCE_COMMIT:refs/heads/main"
 
-tag="v${CONNECTOR_VERSION}"
-current_tag="$(git ls-remote "$remote" "refs/tags/$tag" | awk 'NR == 1 {print $1}')"
-if [ -n "$current_tag" ]; then
-  test "$current_tag" = "$SOURCE_COMMIT"
-else
-  git push "$remote" "$SOURCE_COMMIT:refs/tags/$tag"
-fi
+  tag="v${CONNECTOR_VERSION}"
+  current_tag="$(git ls-remote "$remote" "refs/tags/$tag" | awk 'NR == 1 {print $1}')"
+  if [ -n "$current_tag" ]; then
+    test "$current_tag" = "$SOURCE_COMMIT"
+  else
+    git push "$remote" "$SOURCE_COMMIT:refs/tags/$tag"
+  fi
+}
+
+export GIT_AUTH_USER="$GITEE_USER"
+export GIT_AUTH_PASSWORD="$GITEE_TOKEN"
+publish_remote "https://gitee.com/zxflimit_admin/wechat-bridge-collector.git"
+export GIT_AUTH_USER="$GITHUB_USER"
+export GIT_AUTH_PASSWORD="$GITHUB_TOKEN"
+publish_remote "https://github.com/momoplan/wechat-bridge-collector.git"
 '''
                 }
             }
