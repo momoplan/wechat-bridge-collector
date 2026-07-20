@@ -1,0 +1,137 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    parameters {
+        string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
+        string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '0.4.0', description: 'WeChat Connector version')
+        string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.1.105', description: 'Minimum compatible Bridge Agent version')
+        booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing refs or market data')
+    }
+
+    stages {
+        stage('Validate release input') {
+            steps {
+                sh '''#!/bin/bash
+set -euo pipefail
+test -n "$SOURCE_COMMIT"
+test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+test "$(jq -r '.version' connector.json)" = "$CONNECTOR_VERSION"
+test "$(jq -r '.schemaVersion' connector.json)" = "1.2"
+test "$(jq -r '.runtime.command' connector.json)" = "wechat-bridge-collector-python"
+test "$(jq -r '.runtime.startPolicy' connector.json)" = "manual"
+test "$(sed -n 's/^version = "\\([^"]*\\)"/\\1/p' pyproject.toml | head -1)" = "$CONNECTOR_VERSION"
+test "$(sed -n 's/^__version__ = "\\([^"]*\\)"/\\1/p' wechat_bridge_collector/__init__.py)" = "$CONNECTOR_VERSION"
+test ! -e wechat_bridge_collector/scripts/macos/com.baijimu.wechat-bridge-collector.plist
+! jq -e '.hooks.installAutostart' connector.json >/dev/null
+case "$CONNECTOR_VERSION" in *[!0-9.]*|'') exit 1 ;; esac
+case "$MIN_BRIDGE_VERSION" in *[!0-9.]*|'') exit 1 ;; esac
+'''
+            }
+        }
+
+        stage('Test release source') {
+            steps {
+                sh '''#!/bin/bash
+set -euo pipefail
+release_venv="$WORKSPACE/.release-venv"
+case "$release_venv" in "$WORKSPACE"/*) ;; *) exit 1 ;; esac
+trap 'rm -rf -- "$release_venv"' EXIT
+python3 -m venv "$release_venv"
+"$release_venv/bin/python" -m pip install --disable-pip-version-check . pytest
+"$release_venv/bin/python" -m pytest -q
+python3 -m py_compile wechat_bridge_collector/*.py
+bash -n agent-skill/scripts/setup_macos.sh
+jq -e . connector.json >/dev/null
+jq -e . service-registration.json >/dev/null
+'''
+            }
+        }
+
+        stage('Publish immutable source ref') {
+            when {
+                expression { return !params.DRY_RUN }
+            }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'github-momoplan-token',
+                    usernameVariable: 'GITHUB_USER',
+                    passwordVariable: 'GITHUB_TOKEN'
+                )]) {
+                    sh '''#!/bin/bash
+set -euo pipefail
+set +x
+remote="https://github.com/momoplan/wechat-bridge-collector.git"
+askpass="$WORKSPACE/.wechat-release-git-askpass.sh"
+trap 'rm -f "$askpass"' EXIT
+cat > "$askpass" <<'ASKPASS'
+#!/bin/sh
+case "$1" in
+  *Username*) printf '%s\n' "$GITHUB_USER" ;;
+  *Password*) printf '%s\n' "$GITHUB_TOKEN" ;;
+  *) exit 1 ;;
+esac
+ASKPASS
+chmod 700 "$askpass"
+export GIT_ASKPASS="$askpass"
+export GIT_TERMINAL_PROMPT=0
+
+current_main="$(git ls-remote "$remote" refs/heads/main | awk 'NR == 1 {print $1}')"
+if [ -n "$current_main" ] && ! git merge-base --is-ancestor "$current_main" "$SOURCE_COMMIT"; then
+  echo "refusing non-fast-forward publish to main" >&2
+  exit 1
+fi
+git push "$remote" "$SOURCE_COMMIT:refs/heads/main"
+
+tag="v${CONNECTOR_VERSION}"
+current_tag="$(git ls-remote "$remote" "refs/tags/$tag" | awk 'NR == 1 {print $1}')"
+if [ -n "$current_tag" ]; then
+  test "$current_tag" = "$SOURCE_COMMIT"
+else
+  git push "$remote" "$SOURCE_COMMIT:refs/tags/$tag"
+fi
+'''
+                }
+            }
+        }
+
+        stage('Publish local app market') {
+            when {
+                expression { return !params.DRY_RUN }
+            }
+            steps {
+                sh './publish-market.sh "$CONNECTOR_VERSION" "$SOURCE_COMMIT" "$MIN_BRIDGE_VERSION"'
+            }
+        }
+
+        stage('Verify published release') {
+            when {
+                expression { return !params.DRY_RUN }
+            }
+            steps {
+                sh '''#!/bin/bash
+set -euo pipefail
+tag_commit="$(git ls-remote https://github.com/momoplan/wechat-bridge-collector.git "refs/tags/v${CONNECTOR_VERSION}" | awk 'NR == 1 {print $1}')"
+test "$tag_commit" = "$SOURCE_COMMIT"
+for target in 'macos&arch=aarch64' 'windows&arch=x86_64'; do
+  payload="$(curl -fsS --retry 3 --connect-timeout 5 --max-time 20 "https://www.baijimu.com/lowcode3/api/local-app-market/apps?platform=${target}")"
+  printf '%s' "$payload" | jq -e --arg version "$CONNECTOR_VERSION" --arg min_bridge "$MIN_BRIDGE_VERSION" '
+    (if type == "array" then . elif type == "object" and (.data | type) == "array" then .data else [] end)
+    | any(.connectorId == "com.baijimu.connector.wechat"
+      and .latestVersion.version == $version
+      and .latestVersion.revision == ("v" + $version)
+      and .latestVersion.manifest.command == "wechat-bridge-collector-python"
+      and .latestVersion.manifest.startPolicy == "manual"
+      and .latestVersion.manifest.minimumBridgeVersion == $min_bridge)' >/dev/null
+done
+'''
+            }
+        }
+    }
+}
