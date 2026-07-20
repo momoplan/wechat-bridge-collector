@@ -271,6 +271,7 @@ class WeChatSource:
         )
 
     def probe(self) -> dict[str, Any]:
+        self.assert_source_access()
         names = self.contact_names()
         session_state = self.read_session_state()
         msg_tables = 0
@@ -292,6 +293,36 @@ class WeChatSource:
             "session_count": len(session_state),
             "contact_name_count": len(names),
         }
+
+    def assert_source_access(self) -> None:
+        db_dir = Path(self.db_dir)
+        try:
+            db_dir.stat()
+            if not db_dir.is_dir():
+                raise RuntimeError(f"WeChat database directory does not exist: {db_dir}")
+            with os.scandir(db_dir) as entries:
+                next(entries, None)
+            candidates = [
+                os.path.join("contact", "contact.db"),
+                os.path.join("session", "session.db"),
+                *self.msg_db_keys,
+            ]
+            for rel_key in candidates:
+                source_path = db_dir / rel_key.replace("\\", os.sep).replace("/", os.sep)
+                try:
+                    source_path.stat()
+                except FileNotFoundError:
+                    continue
+                with source_path.open("rb") as handle:
+                    handle.read(1)
+                return
+            raise RuntimeError(f"No readable WeChat database files were found under: {db_dir}")
+        except PermissionError as exc:
+            raise _full_disk_access_error() from exc
+        except OSError as exc:
+            if exc.errno in {1, 13}:
+                raise _full_disk_access_error() from exc
+            raise
 
     def contact_names(self) -> dict[str, str]:
         contacts, signature = self._all_contacts()
@@ -1076,6 +1107,13 @@ def file_signature(path: str) -> tuple[float, int] | None:
 def source_db_file_signature(db_dir: str, rel_key: str) -> tuple[float, int] | None:
     path = Path(db_dir) / rel_key.replace("\\", os.sep).replace("/", os.sep)
     return file_signature(str(path))
+
+
+def _full_disk_access_error() -> RuntimeError:
+    return RuntimeError(
+        "无法读取微信本地数据库。请在 macOS 系统设置 > 隐私与安全性 > "
+        "完全磁盘访问中启用“百积木”，重启百积木后再手动启动 WeChat Connector。"
+    )
 
 
 def encode_message_table_signature(

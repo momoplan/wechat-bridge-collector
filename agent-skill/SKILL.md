@@ -2,7 +2,7 @@
 name: wechat-bridge-collector-setup
 description: 帮用户在本机配置 WeChat Bridge Collector，把电脑上的微信 4.x 本地消息接入 bridge-agent，并完成安装、权限、启动、注册和验证。
 allowed-tools: "Bash,Read,Grep,Glob"
-version: "1.0.0"
+version: "2.0.0"
 ---
 
 # WeChat Bridge Collector 本机配置助手
@@ -15,12 +15,10 @@ version: "1.0.0"
 
 1. `bridge-agent` 在本机运行，默认地址 `http://127.0.0.1:18081`。
 2. `wechat-bridge-collector` 安装成功。
-3. `wechat-bridge-collector setup` 能生成配置和 key 文件。
-4. `wechat-bridge-collector probe` 能读取本机微信数据库。
-5. `wechat-bridge-collector install-autostart` 能安装平台自启入口。
-6. `wechat-bridge-collector start` 能触发后台启动并返回。
-7. `wechat-bridge-collector register` 能向 bridge-agent 注册 `wechatLocal` 服务。
-8. 本机方法服务可用，默认 `http://127.0.0.1:18082/health` 返回成功。
+3. `wechat-bridge-collector-python setup` 能生成配置和 key 文件。
+4. macOS 完全磁盘访问权限授予签名后的“百积木”应用，而不是 Python、Terminal 或独立 LaunchAgent。
+5. Connector 从百积木应用详情页由用户显式启动，并完成权限预检。
+6. 本机方法服务可用，默认 `http://127.0.0.1:18082/health` 返回成功。
 
 ## 安全边界
 - 不索要、不保存用户微信账号密码。
@@ -38,8 +36,7 @@ version: "1.0.0"
 - collector 事件名：`messageReceived`
 - collector method server：`http://127.0.0.1:18082`
 - bridge-agent：`http://127.0.0.1:18081`
-- macOS LaunchAgent：`~/Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist`
-- Windows Startup：`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\BaijimuWeChatCollector.cmd`
+- 旧版 macOS LaunchAgent（必须迁移删除）：`~/Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist`
 
 ## 执行流程
 
@@ -54,8 +51,8 @@ curl -sS http://127.0.0.1:18081/health
 ```
 
 判断：
-- macOS：优先使用 `scripts/setup_macos.sh`，或直接使用 collector 内置 `install-autostart/start`。
-- Windows：按 README 手动安装 collector 后，使用 collector 内置 `install-autostart/start`。
+- macOS：优先使用 `scripts/setup_macos.sh` 完成源码和 key 初始化；系统权限与启动必须回到百积木应用中完成。
+- Windows：按 README 安装 Connector，再从百积木应用中启动。
 - Linux：先确认 Python、Git、WeChat 4.x、bridge-agent；当前没有官方自启集成。
 - bridge-agent 不通：先让用户安装并启动 bridge-agent，再继续 collector 配置。
 
@@ -72,10 +69,9 @@ bash {baseDir}/scripts/setup_macos.sh
 - clone 或更新 `wechat-bridge-collector`。
 - 初始化 venv 并 `pip install .`。
 - 执行 `wechat-bridge-collector setup`。
-- 执行 `wechat-bridge-collector probe`。
-- 写入 LaunchAgent。
-- 启动 collector。
-- 调用 `/health` 和 `register` 验证。
+- 删除旧版遗留的 LaunchAgent。
+- 打开 macOS 完全磁盘访问设置。
+- 提示用户把“百积木”加入并开启，重启百积木后从应用详情页启动。
 
 如果 setup 因 macOS `task_for_pid` 被拦截失败，按错误提示处理：
 
@@ -101,20 +97,17 @@ cd wechat-bridge-collector
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/pip install .
-.venv/bin/wechat-bridge-collector setup
-.venv/bin/wechat-bridge-collector probe
-.venv/bin/wechat-bridge-collector install-autostart
-.venv/bin/wechat-bridge-collector start
-.venv/bin/wechat-bridge-collector register
+.venv/bin/wechat-bridge-collector-python setup
 ```
+
+随后在百积木中安装 WeChat Connector，打开“完全磁盘访问设置”，给“百积木”授权并重启百积木，最后在应用详情页点击“启动应用”。不要创建 LaunchAgent，也不要从 Terminal 直接长期运行 collector。
 
 ### 4. 验证
 配置后必须验证：
 
 ```bash
 curl -sS http://127.0.0.1:18082/health
-.venv/bin/wechat-bridge-collector status
-.venv/bin/wechat-bridge-collector register
+.venv/bin/wechat-bridge-collector-python status
 ```
 
 再用本机方法查询：
@@ -128,9 +121,9 @@ curl -sS http://127.0.0.1:18082/invoke/getRecentSessions \
 成功标准：
 - `/health` 返回成功。
 - `status` 返回 `running`。
-- `register` 返回成功。
 - `getRecentSessions` 返回 `success: true`。
 - bridge-agent 小客户端或工作区能看到 `wechatLocal`。
+- `launchctl print gui/$(id -u)/com.baijimu.wechat-bridge-collector` 返回找不到服务。
 
 ### 5. 常见问题处理
 
@@ -141,43 +134,27 @@ curl -sS http://127.0.0.1:18082/invoke/getRecentSessions \
 确认用户安装并登录的是微信 4.x，且微信至少打开过一次。再运行：
 
 ```bash
-.venv/bin/wechat-bridge-collector setup --force
+.venv/bin/wechat-bridge-collector-python setup --force
 ```
 
 #### macOS 权限拦截
-如果看到 `task_for_pid`，需要管理员权限执行 setup。执行后可能需要重启微信再重跑。
+如果看到 `task_for_pid`，需要管理员权限执行 setup。执行后可能需要重启微信再重跑。读取微信沙盒数据库的完全磁盘访问权限必须授予“百积木”；不要给 Connector 私有 Python 单独授权。
 
 #### 端口冲突
-如果 `18082` 被占用，改用其他端口：
-
-```bash
-.venv/bin/wechat-bridge-collector --method-port 18083 run --register
-```
-
-同时更新 LaunchAgent 的 `--method-port`。
+如果 `18082` 被占用，在百积木的 Connector 配置中修改 `methodPort`，保存后重新启动应用。不要绕过百积木从 Terminal 长期运行。
 
 #### 注册失败
-检查 bridge-agent token 是否可从本机配置自动读取。如果不能，要求用户提供运行环境变量，不要打印 token：
-
-```bash
-export BRIDGE_AGENT_SERVICE_REGISTRATION_TOKEN='...'
-export BRIDGE_AGENT_EVENT_TOKEN='...'
-.venv/bin/wechat-bridge-collector register
-```
+重新同步或重新安装 Connector，并检查百积木本机服务注册状态。不要输出 bridge-agent token，也不要用 Terminal 启动另一份 collector 作为补偿。
 
 #### 启动后没有历史消息
-这是正常行为。首次启动默认只建立游标，不广播历史消息。需要临时回放最近 5 分钟时才执行：
-
-```bash
-.venv/bin/wechat-bridge-collector run --register --reset-state --backfill-seconds 300
-```
+这是正常行为。首次启动默认只建立游标，不广播历史消息。生产 Connector 不从 Terminal 直接回放；确需历史回放时先停止应用实例，再按维护流程显式执行并在结束后恢复应用实例。
 
 ## 输出给用户
 完成后简洁返回：
 - 安装目录
-- LaunchAgent 状态
+- 完全磁盘访问授权步骤与旧 LaunchAgent 清理状态
 - collector health 状态
-- bridge-agent 注册状态
+- bridge-agent 本机服务状态
 - `wechatLocal` 已注册的方法列表
 - 如有失败，明确失败步骤和下一条命令
 

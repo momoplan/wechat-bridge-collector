@@ -2,7 +2,9 @@
 
 跨平台微信本地消息采集器和只读查询服务。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 的 key 提取能力，然后把新消息作为 bridge-agent 事件广播出去，同时向 bridge-agent 注册本机 HTTP methods 用于查询最近会话、联系人、聊天记录和消息搜索。
 
-官方市场包从 `0.3.0` 起内置 Rust 原生入口 `bin/<os>-<arch>/wechat-bridge-collector`，Bridge Agent 安装时会优先使用该入口。仓库里的 Python 实现保留为兼容参考，不再是官方市场运行路径。
+从 `0.4.0` 起官方 Connector 固定使用 Python 入口 `wechat-bridge-collector-python`。仓库中保留的 Rust 实验代码和旧二进制不参与 Connector 启动解析，也不是官方市场运行路径。
+
+macOS 上由签名后的百积木桌面应用作为权限宿主启动 Python 子进程。Connector 不再安装或加载 LaunchAgent；这是为了让微信沙盒数据库的访问权限稳定归属到“百积木”，而不是归属到一个无稳定签名身份的独立 Python/launchd 进程。
 
 ## 架构
 
@@ -26,13 +28,12 @@ collector 不直接连接 relay，也不修改微信数据。
 bridge-agent connector install /path/to/wechat-bridge-collector --replace
 ```
 
-安装器会读取 `connector.json`，再引用 `service-registration.json` 注册 `wechatLocal` 服务。标准安装机制成熟后，安装器应继续编排：
+安装器会读取 `connector.json`，再引用 `service-registration.json` 注册 `wechatLocal` 服务。安装后按下面顺序操作：
 
-- `wechat-bridge-collector setup`
-- `wechat-bridge-collector probe`
-- `wechat-bridge-collector install-autostart`
-- `wechat-bridge-collector start`
-- `wechat-bridge-collector register`
+- 在 macOS“隐私与安全性 > 完全磁盘访问”中启用“百积木”并重启百积木
+- `wechat-bridge-collector-python setup`
+- `wechat-bridge-collector-python probe`
+- 从百积木应用详情页手动启动 Connector
 - `GET http://127.0.0.1:18082/health`
 
 当前 README 保留下面的手工命令，主要用于调试、诊断和 legacy fallback。
@@ -72,10 +73,10 @@ macOS 首次提取 key 可能需要管理员权限；如果系统拦截 `task_fo
 
 ## 本机运行
 
-从源码构建 collector：
+从源码安装 Python collector：
 
 ```bash
-cargo build --release
+python3 -m pip install -e .
 ```
 
 验证读取链路：
@@ -125,19 +126,19 @@ wechat-bridge-collector --method-port 18083 run --register
 wechat-bridge-collector run --reset-state --backfill-seconds 300
 ```
 
-## 后台启动和自启
+## 后台启动
 
-collector 提供统一 CLI，内部按平台分发到独立脚本：
+collector 提供统一 CLI：
 
 ```bash
-wechat-bridge-collector install-autostart
-wechat-bridge-collector start
-wechat-bridge-collector status
+wechat-bridge-collector-python start
+wechat-bridge-collector-python status
+wechat-bridge-collector-python stop
 ```
 
-- Windows：渲染并执行 `wechat_bridge_collector/scripts/windows/start-collector.ps1`，同时写入当前用户 Startup 启动项。
-- macOS：渲染并加载 `wechat_bridge_collector/scripts/macos/com.baijimu.wechat-bridge-collector.plist`。
-- Linux：当前未提供自启集成。
+- macOS：必须由百积木应用详情页显式启动；不创建 LaunchAgent，不随登录自行拉起。
+- Windows：渲染并执行 `wechat_bridge_collector/scripts/windows/start-collector.ps1`。
+- Linux：当前未提供后台启动集成。
 
 Bridge Agent 注册时的 `startCommand` 会统一指向：
 
@@ -145,7 +146,7 @@ Bridge Agent 注册时的 `startCommand` 会统一指向：
 python -m wechat_bridge_collector start
 ```
 
-因此 `startCommand` 只负责触发后台启动并退出，不直接运行长期前台采集循环。
+Connector 的 `runtime.startPolicy` 是 `manual`。Bridge Agent 构建运行时能力时不会自动执行它；只有用户完成授权并点击“启动应用”后，`startCommand` 才会触发后台进程并退出。
 
 ## 事件
 
@@ -182,7 +183,8 @@ payload 示例：
 注册 payload 同时包含：
 
 - `healthCheck`：`GET /health`，供 Bridge Agent 小客户端展示采集器是否可用。
-- `startCommand`：通过 `wechat-bridge-collector start` 触发对应平台后台启动；Bridge Agent 只按注册字段执行，不内置 WeChat 采集器逻辑。
+- `startCommand`：通过 Python 入口启动采集器。
+- `stopCommand`：停止 PID 文件所指向且经过命令行校验的采集器进程。
 
 - `getRecentSessions`：查询最近会话。
 - `getContacts`：搜索或列出联系人、群聊。

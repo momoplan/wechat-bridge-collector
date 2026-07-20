@@ -29,11 +29,14 @@ if ($Config) {
 }
 $args += @("run")
 
-Start-Process -FilePath $Python `
+$process = Start-Process -FilePath $Python `
   -ArgumentList $args `
   -WindowStyle Hidden `
   -RedirectStandardOutput $out `
-  -RedirectStandardError $err
+  -RedirectStandardError $err `
+  -PassThru
+
+Set-Content -Path (Join-Path "{{STATE_DIR}}" "collector.pid") -Value $process.Id -Encoding Ascii
 
 Start-Sleep -Seconds 5
 try {

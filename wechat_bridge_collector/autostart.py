@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import platform
+import signal
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from importlib import resources
 from pathlib import Path
@@ -31,13 +33,20 @@ def start_command() -> dict[str, object]:
     }
 
 
+def stop_command() -> dict[str, object]:
+    return {
+        "type": "shell_command",
+        "command": [sys.executable, "-m", "wechat_bridge_collector", "stop"],
+        "timeoutSecs": 20,
+    }
+
+
 def install_autostart(config: CollectorConfig) -> AutostartResult:
-    system = platform.system().lower()
-    if system == "windows":
-        return _install_windows_autostart(config)
-    if system == "darwin":
-        return _install_macos_autostart(config)
-    raise RuntimeError(f"install-autostart is not supported on {platform.system()}")
+    del config
+    raise RuntimeError(
+        "install-autostart has been removed. Start this connector from Baijimu so macOS "
+        "attributes protected-data access to the signed Baijimu application."
+    )
 
 
 def start_collector(config: CollectorConfig) -> AutostartResult:
@@ -73,6 +82,45 @@ def start_collector(config: CollectorConfig) -> AutostartResult:
     if system == "darwin":
         return _start_macos(config)
     raise RuntimeError(f"start is not supported on {platform.system()}")
+
+
+def stop_collector(config: CollectorConfig) -> AutostartResult:
+    system = platform.system().lower()
+    if system == "darwin":
+        _remove_legacy_macos_autostart()
+    pid_path = _pid_path(config)
+    pid = _read_pid(pid_path)
+    if pid is None:
+        return AutostartResult(
+            status="stopped",
+            platform=system,
+            health_url=config.method_base_url + "/health",
+            message="collector is not running",
+        )
+    if not _collector_process_matches(pid):
+        pid_path.unlink(missing_ok=True)
+        return AutostartResult(
+            status="stopped",
+            platform=system,
+            health_url=config.method_base_url + "/health",
+            message="removed stale collector pid file",
+        )
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + 8
+    while _process_running(pid) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if _process_running(pid):
+        os.kill(pid, signal.SIGKILL)
+    pid_path.unlink(missing_ok=True)
+    return AutostartResult(
+        status="stopped",
+        platform=system,
+        health_url=config.method_base_url + "/health",
+    )
 
 
 def status(config: CollectorConfig) -> AutostartResult:
@@ -113,90 +161,62 @@ def _install_windows_autostart(config: CollectorConfig) -> AutostartResult:
     )
 
 
-def _install_macos_autostart(config: CollectorConfig) -> AutostartResult:
-    plist = _macos_plist_path()
-    plist.parent.mkdir(parents=True, exist_ok=True)
-    stdout_path = Path(config.state_dir).expanduser() / "collector.log"
-    stderr_path = Path(config.state_dir).expanduser() / "collector.err.log"
-    plist.write_text(
-        _render_resource(
-            "macos",
-            "com.baijimu.wechat-bridge-collector.plist",
-            {
-                "PYTHON": sys.executable,
-                "CONFIG": str(config.config_path),
-                "STATE_DIR": str(Path(config.state_dir).expanduser()),
-                "STDOUT": str(stdout_path),
-                "STDERR": str(stderr_path),
-            },
-        ),
-        encoding="utf-8",
-    )
-    subprocess.run(
-        ["launchctl", "bootout", f"gui/{os.getuid()}", str(plist)],
-        text=True,
-        capture_output=True,
-        timeout=15,
-    )
-    completed = subprocess.run(
-        ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)],
-        text=True,
-        capture_output=True,
-        timeout=15,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(_format_process_error(completed))
-    subprocess.run(
-        ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.baijimu.wechat-bridge-collector"],
-        text=True,
-        capture_output=True,
-        timeout=15,
-    )
-    return AutostartResult(
-        status="installed",
-        platform="darwin",
-        launcher_path=str(plist),
-        autostart_path=str(plist),
-        health_url=config.method_base_url + "/health",
-    )
-
-
 def _start_macos(config: CollectorConfig) -> AutostartResult:
-    plist = _macos_plist_path()
-    if plist.exists():
-        completed = subprocess.run(
-            ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.baijimu.wechat-bridge-collector"],
-            text=True,
-            capture_output=True,
-            timeout=15,
-        )
-        if completed.returncode != 0:
-            raise RuntimeError(_format_process_error(completed))
+    _remove_legacy_macos_autostart()
+    if _health_ok(config.method_base_url + "/health"):
         return AutostartResult(
-            status="started",
+            status="running",
             platform="darwin",
-            launcher_path=str(plist),
             health_url=config.method_base_url + "/health",
+            message="collector is already healthy",
         )
 
     stdout_path = Path(config.state_dir).expanduser() / "collector.log"
     stderr_path = Path(config.state_dir).expanduser() / "collector.err.log"
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    _rotate_log(stdout_path)
+    _rotate_log(stderr_path)
     stdout = stdout_path.open("ab")
     stderr = stderr_path.open("ab")
     args = [sys.executable, "-u", "-m", "wechat_bridge_collector", "--config", str(config.config_path), "run"]
-    subprocess.Popen(
+    env = dict(os.environ)
+    existing_pythonpath = env.get("PYTHONPATH", "").strip()
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(_package_root()), existing_pythonpath) if part
+    )
+    process = subprocess.Popen(
         args,
         stdout=stdout,
         stderr=stderr,
+        env=env,
         start_new_session=True,
         close_fds=True,
     )
+    stdout.close()
+    stderr.close()
+    _write_pid(_pid_path(config), process.pid)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if _health_ok(config.method_base_url + "/health"):
+            return AutostartResult(
+                status="started",
+                platform="darwin",
+                health_url=config.method_base_url + "/health",
+                message="started by the Baijimu permission host without LaunchAgent",
+            )
+        exit_code = process.poll()
+        if exit_code is not None:
+            _pid_path(config).unlink(missing_ok=True)
+            detail = _tail_text(stderr_path)
+            raise RuntimeError(
+                f"collector exited before becoming healthy (exit {exit_code}): {detail}"
+            )
+        time.sleep(0.25)
     return AutostartResult(
         status="started",
         platform="darwin",
         health_url=config.method_base_url + "/health",
-        message="started without LaunchAgent; run install-autostart for login startup",
+        message="collector start issued; health check is not ready yet",
     )
 
 
@@ -223,6 +243,10 @@ def _macos_plist_path() -> Path:
     return Path.home() / "Library" / "LaunchAgents" / "com.baijimu.wechat-bridge-collector.plist"
 
 
+def _package_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
 def _render_resource(platform_dir: str, name: str, values: dict[str, str]) -> str:
     template = (
         resources.files(__package__)
@@ -234,6 +258,82 @@ def _render_resource(platform_dir: str, name: str, values: dict[str, str]) -> st
     for key, value in values.items():
         template = template.replace("{{" + key + "}}", value)
     return template
+
+
+def _remove_legacy_macos_autostart() -> None:
+    plist = _macos_plist_path()
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{os.getuid()}/com.baijimu.wechat-bridge-collector"],
+        text=True,
+        capture_output=True,
+        timeout=15,
+    )
+    plist.unlink(missing_ok=True)
+
+
+def _pid_path(config: CollectorConfig) -> Path:
+    return Path(config.state_dir).expanduser() / "collector.pid"
+
+
+def _read_pid(path: Path) -> int | None:
+    try:
+        pid = int(path.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return None
+    return pid if pid > 1 and _process_running(pid) else None
+
+
+def _write_pid(path: Path, pid: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(str(pid), encoding="ascii")
+    os.replace(tmp, path)
+
+
+def _process_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _collector_process_matches(pid: int) -> bool:
+    if platform.system().lower() != "darwin":
+        return _process_running(pid)
+    completed = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "command="],
+        text=True,
+        capture_output=True,
+        timeout=5,
+    )
+    return completed.returncode == 0 and "wechat_bridge_collector" in completed.stdout
+
+
+def _rotate_log(path: Path, max_bytes: int = 5 * 1024 * 1024, backups: int = 3) -> None:
+    try:
+        if path.stat().st_size < max_bytes:
+            return
+    except FileNotFoundError:
+        return
+    for index in range(backups, 0, -1):
+        source = path if index == 1 else path.with_name(f"{path.name}.{index - 1}")
+        target = path.with_name(f"{path.name}.{index}")
+        if source.exists():
+            os.replace(source, target)
+
+
+def _tail_text(path: Path, limit: int = 4096) -> str:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+            return handle.read().decode("utf-8", errors="replace").strip()
+    except OSError:
+        return "no collector error output"
 
 
 def _health_ok(url: str) -> bool:

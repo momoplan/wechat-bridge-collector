@@ -5,7 +5,7 @@ import json
 import sys
 import time
 
-from .autostart import install_autostart, result_json, start_collector, status
+from .autostart import install_autostart, result_json, start_collector, status, stop_collector
 from .bridge import BridgeClient
 from .config import CollectorConfig
 from .query_server import QueryMethodServer
@@ -88,6 +88,13 @@ def cmd_start(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stop(args: argparse.Namespace) -> int:
+    cfg = _load_config(args)
+    result = stop_collector(cfg)
+    print(result_json(result))
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = _load_config(args)
     result = status(cfg)
@@ -103,11 +110,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         cfg.include_outgoing = False
 
     source = WeChatSource(cfg)
+    source.assert_source_access()
     method_server = QueryMethodServer(cfg, source)
     method_server.start()
     bridge = BridgeClient(cfg)
     state = CollectorState.load(cfg.state_path)
     first_start = not cfg.state_path.exists()
+    delivery_failure_count = 0
 
     try:
         if args.register:
@@ -156,6 +165,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                             file=sys.stderr,
                         )
                         failed = True
+                        delivery_failure_count += 1
                         break
                     state.set_cursor(
                         candidate.cursor_key,
@@ -166,13 +176,20 @@ def cmd_run(args: argparse.Namespace) -> int:
 
                 if not failed:
                     state.sessions = current_sessions
+                    delivery_failure_count = 0
                 state.save(cfg.state_path)
 
                 if args.once:
                     print(f"emitted={emitted} changed_sessions={len(changed)}")
                     return 0
 
-                time.sleep(cfg.poll_interval_secs)
+                delay = cfg.poll_interval_secs
+                if delivery_failure_count:
+                    delay = max(
+                        delay,
+                        min(60.0, max(2.0, cfg.poll_interval_secs) * (2 ** min(delivery_failure_count - 1, 5))),
+                    )
+                time.sleep(delay)
             except DatabaseSnapshotError as exc:
                 print(f"snapshot failed: {exc}; state session markers were not advanced", file=sys.stderr)
                 state.save(cfg.state_path)
@@ -228,6 +245,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     start = sub.add_parser("start", help="start the collector in the background and return")
     start.set_defaults(func=cmd_start)
+
+    stop = sub.add_parser("stop", help="stop the background collector")
+    stop.set_defaults(func=cmd_stop)
 
     status_parser = sub.add_parser("status", help="check whether the local method server is healthy")
     status_parser.set_defaults(func=cmd_status)

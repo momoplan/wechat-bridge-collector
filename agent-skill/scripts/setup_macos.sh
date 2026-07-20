@@ -5,7 +5,6 @@ REPO_URL="${WECHAT_BRIDGE_COLLECTOR_REPO:-https://github.com/momoplan/wechat-bri
 BASE_DIR="${WECHAT_BRIDGE_BASE_DIR:-$HOME/baijimu-wechat-bridge}"
 PROJECT_DIR="$BASE_DIR/wechat-bridge-collector"
 BRIDGE_URL="${BRIDGE_AGENT_URL:-http://127.0.0.1:18081}"
-METHOD_URL="${WECHAT_COLLECTOR_METHOD_URL:-http://127.0.0.1:18082}"
 
 log() {
   printf '[wechat-bridge-collector] %s\n' "$*"
@@ -50,7 +49,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/pip install .
 
-COLLECTOR="$PROJECT_DIR/.venv/bin/wechat-bridge-collector"
+COLLECTOR="$PROJECT_DIR/.venv/bin/wechat-bridge-collector-python"
 
 log "Running collector setup"
 if ! "$COLLECTOR" setup; then
@@ -61,34 +60,13 @@ if ! "$COLLECTOR" setup; then
   exit 3
 fi
 
-log "Running collector probe"
-"$COLLECTOR" probe
+log "Removing the legacy LaunchAgent"
+launchctl bootout "gui/$(id -u)/com.baijimu.wechat-bridge-collector" >/dev/null 2>&1 || true
+rm -f "$HOME/Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist"
 
-log "Installing platform autostart"
-"$COLLECTOR" install-autostart
+log "Opening Full Disk Access settings"
+open 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles' || true
 
-log "Starting collector"
-"$COLLECTOR" start
-
-log "Waiting for method server"
-for _ in $(seq 1 20); do
-  if curl -fsS "$METHOD_URL/health" >/dev/null; then
-    break
-  fi
-  sleep 1
-done
-
-log "Health check"
-curl -fsS "$METHOD_URL/health"
-printf '\n'
-
-log "Registering service with bridge-agent"
-"$COLLECTOR" register
-
-log "Checking recent sessions endpoint"
-curl -fsS "$METHOD_URL/invoke/getRecentSessions" \
-  -H 'Content-Type: application/json' \
-  -d '{"limit":5}'
-printf '\n'
-
-log "Done. Install dir: $PROJECT_DIR"
+log "Source and key setup completed. Install WeChat Connector in Baijimu, grant Full Disk Access to Baijimu, restart Baijimu, then click Start App."
+log "Do not create a LaunchAgent or run the collector persistently from Terminal."
+log "Install dir: $PROJECT_DIR"

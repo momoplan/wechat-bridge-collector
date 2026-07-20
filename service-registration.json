@@ -364,8 +364,16 @@
   "startCommand": {
     "type": "shell_command",
     "command": [
-      "wechat-bridge-collector",
+      "wechat-bridge-collector-python",
       "start"
+    ],
+    "timeoutSecs": 20
+  },
+  "stopCommand": {
+    "type": "shell_command",
+    "command": [
+      "wechat-bridge-collector-python",
+      "stop"
     ],
     "timeoutSecs": 20
   },

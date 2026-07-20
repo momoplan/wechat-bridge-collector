@@ -6,7 +6,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from .autostart import start_command
+from .autostart import start_command, stop_command
 from .config import CollectorConfig
 
 
@@ -304,6 +304,7 @@ class BridgeClient:
             "managed_by": "wechat-bridge-collector",
         }
         registration["startCommand"] = start_command()
+        registration["stopCommand"] = stop_command()
         return self._post_json(
             self.config.bridge_services_url,
             registration,

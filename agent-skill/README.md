@@ -5,14 +5,14 @@
 ## 文件
 
 - `SKILL.md`：技能主指令。
-- `scripts/setup_macos.sh`：macOS 一键安装、配置、启动和验证脚本。
-- Windows/macOS 后台启动入口由 `wechat-bridge-collector install-autostart/start` 提供，平台脚本随 collector 包分发。
+- `scripts/setup_macos.sh`：macOS 源码与 key 初始化、旧 LaunchAgent 清理和权限设置入口。
+- 后台生命周期由百积木管理；Connector 不创建 macOS LaunchAgent。
 
 ## 发布信息
 
 - 建议技能名：`微信本机采集器配置`
-- 建议版本：`1.0.0`
-- 建议描述：`帮助用户在电脑上安装和配置 WeChat Bridge Collector，完成 bridge-agent 注册、LaunchAgent 启动和本机健康检查。`
+- 建议版本：`2.0.0`
+- 建议描述：`帮助用户安装 WeChat Bridge Collector，把完全磁盘访问授予百积木，并从签名后的百积木应用启动和验证。`
 
 ## 用户侧结果
 

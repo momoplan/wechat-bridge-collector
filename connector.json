@@ -1,8 +1,8 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.2",
   "id": "com.baijimu.connector.wechat",
   "name": "WeChat Connector",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
   "publisher": {
     "name": "Baijimu",
@@ -11,12 +11,13 @@
   "source": {
     "type": "github",
     "repo": "momoplan/wechat-bridge-collector",
-    "revision": "v0.3.0"
+    "revision": "v0.4.0"
   },
   "runtime": {
     "type": "process",
-    "command": "wechat-bridge-collector",
+    "command": "wechat-bridge-collector-python",
     "args": ["start"],
+    "startPolicy": "manual",
     "healthCheck": {
       "type": "http",
       "url": "http://127.0.0.1:18082/health",
@@ -24,6 +25,15 @@
       "expectStatus": 200
     }
   },
+  "permissions": [
+    {
+      "id": "macos.fullDiskAccess",
+      "title": "完全磁盘访问",
+      "description": "读取微信沙盒中的本地数据库；请把百积木加入系统设置的完全磁盘访问列表。",
+      "platforms": ["macos"]
+    }
+  ],
+  "legacyAutostartLabels": ["com.baijimu.wechat-bridge-collector"],
   "configSchema": {
     "type": "object",
     "properties": {
@@ -63,8 +73,7 @@
   ],
   "serviceRegistrationFiles": ["service-registration.json"],
   "hooks": {
-    "setup": "wechat-bridge-collector setup",
-    "probe": "wechat-bridge-collector probe",
-    "installAutostart": "wechat-bridge-collector install-autostart"
+    "setup": "wechat-bridge-collector-python setup",
+    "probe": "wechat-bridge-collector-python probe"
   }
 }
