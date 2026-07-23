@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>微信消息</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body data-product="微信" data-product-en="WeChat" data-accent="wechat">
+    <main class="app-shell">
+      <header class="hero">
+        <div class="brand-mark" aria-hidden="true">微</div>
+        <div class="hero-copy">
+          <p class="eyebrow">WECHAT LOCAL</p>
+          <h1>微信消息</h1>
+          <p>在本机查看最近会话、联系人和聊天记录。所有数据都通过受控的本地 Connector 读取。</p>
+        </div>
+        <div class="hero-actions">
+          <span id="runtime-badge" class="status-badge neutral">连接中</span>
+          <button id="refresh-button" class="button secondary" type="button">刷新</button>
+        </div>
+      </header>
+
+      <nav class="view-tabs" aria-label="微信本地功能">
+        <button class="view-tab active" type="button" data-view="chats">会话</button>
+        <button class="view-tab" type="button" data-view="contacts">联系人</button>
+        <button class="view-tab" type="button" data-view="search">消息搜索</button>
+        <button class="view-tab" type="button" data-view="status">运行状态</button>
+      </nav>
+
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <div id="error" class="notice error" role="alert" hidden></div>
+
+      <section id="chats-view" class="view-panel">
+        <div class="chat-workbench">
+          <aside class="panel conversation-sidebar">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">RECENT</p>
+                <h2>最近会话</h2>
+              </div>
+              <span id="session-count" class="count">0</span>
+            </div>
+            <label class="search-field">
+              <span class="sr-only">筛选会话</span>
+              <input id="session-filter" type="search" placeholder="筛选会话名称" autocomplete="off" />
+            </label>
+            <div id="session-list" class="conversation-list">
+              <div class="empty-state">正在读取会话…</div>
+            </div>
+          </aside>
+
+          <section class="panel message-panel">
+            <div class="message-heading">
+              <div>
+                <p id="conversation-kind" class="eyebrow">选择一个会话</p>
+                <h2 id="conversation-title">聊天记录</h2>
+              </div>
+              <span id="message-count" class="count">0 条</span>
+            </div>
+            <div class="message-toolbar">
+              <label>
+                <span>类型</span>
+                <select id="message-type">
+                  <option value="">全部消息</option>
+                  <option value="text">文本</option>
+                  <option value="image">图片</option>
+                  <option value="voice">语音</option>
+                  <option value="file">文件/应用</option>
+                </select>
+              </label>
+              <label>
+                <span>开始日期</span>
+                <input id="history-start" type="date" />
+              </label>
+              <label>
+                <span>结束日期</span>
+                <input id="history-end" type="date" />
+              </label>
+              <button id="apply-history-filter" class="button secondary compact" type="button" disabled>应用</button>
+            </div>
+            <div id="message-list" class="message-list">
+              <div class="empty-state">从左侧选择会话后读取聊天记录。</div>
+            </div>
+            <button id="load-older-button" class="button secondary load-more" type="button" hidden>加载更早消息</button>
+          </section>
+        </div>
+      </section>
+
+      <section id="contacts-view" class="view-panel" hidden>
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">LOCAL CONTACTS</p>
+              <h2>联系人与群聊</h2>
+              <p>按昵称、备注或本地标识查询；不会把联系人上传到远端。</p>
+            </div>
+            <span id="contact-count" class="count">0</span>
+          </div>
+          <form id="contact-form" class="inline-form">
+            <input id="contact-query" type="search" placeholder="输入联系人或群聊名称" autocomplete="off" />
+            <button class="button primary" type="submit">查询</button>
+          </form>
+          <div id="contact-list" class="contact-grid">
+            <div class="empty-state">输入关键词，或直接查询全部联系人。</div>
+          </div>
+        </section>
+      </section>
+
+      <section id="search-view" class="view-panel" hidden>
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">FULL TEXT</p>
+              <h2>消息搜索</h2>
+              <p>可搜索全部本地会话，或限定到当前选中的会话。</p>
+            </div>
+            <span id="search-count" class="count">0 条</span>
+          </div>
+          <form id="search-form" class="search-form">
+            <label class="wide">
+              <span>关键词</span>
+              <input id="search-keyword" type="search" placeholder="输入消息中的文字" required autocomplete="off" />
+            </label>
+            <label>
+              <span>搜索范围</span>
+              <select id="search-scope">
+                <option value="">全部会话</option>
+                <option id="current-conversation-option" value="" disabled>当前会话</option>
+              </select>
+            </label>
+            <label>
+              <span>开始日期</span>
+              <input id="search-start" type="date" />
+            </label>
+            <label>
+              <span>结束日期</span>
+              <input id="search-end" type="date" />
+            </label>
+            <div class="form-action">
+              <button id="search-button" class="button primary" type="submit">搜索</button>
+            </div>
+          </form>
+          <div id="search-results" class="search-results">
+            <div class="empty-state">输入关键词开始搜索。</div>
+          </div>
+          <button id="load-more-search" class="button secondary load-more" type="button" hidden>加载更多结果</button>
+        </section>
+      </section>
+
+      <section id="status-view" class="view-panel" hidden>
+        <section id="setup-panel" class="panel setup-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">LOCAL ACCESS</p>
+              <h2>密钥与数据库授权</h2>
+              <p>密钥只保存在 Connector 私有目录中。自动获取失败时，可导入已有的 all_keys.json。</p>
+            </div>
+            <span id="setup-badge" class="status-badge warning">正在检查</span>
+          </div>
+          <div class="setup-layout">
+            <div>
+              <strong id="setup-title">正在检查本机配置</strong>
+              <p id="setup-detail">请稍候，Connector 正在检查密钥和微信数据库访问权限。</p>
+              <ol class="permission-steps">
+                <li>保持微信已登录并正在运行。</li>
+                <li>在“系统设置 → 隐私与安全性 → 完全磁盘访问权限”中允许百积木。</li>
+                <li>授权后回到这里点击“重新检测”；如果自动获取需要管理员权限，请按界面提示操作。</li>
+              </ol>
+            </div>
+            <div class="setup-actions">
+              <button id="acquire-keys-button" class="button primary" type="button">自动获取密钥</button>
+              <button id="import-keys-button" class="button secondary" type="button">导入密钥文件</button>
+              <input id="keys-file-input" class="sr-only" type="file" accept=".json,application/json" />
+              <button id="retry-setup-button" class="button secondary" type="button">重新检测</button>
+            </div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">DIAGNOSTICS</p>
+              <h2>本地运行状态</h2>
+              <p>确认数据库、密钥和消息表是否已经被 Connector 正确识别。</p>
+            </div>
+            <button id="reload-status-button" class="button secondary" type="button">重新检测</button>
+          </div>
+          <dl id="status-grid" class="status-grid">
+            <div><dt>服务</dt><dd>正在检测…</dd></div>
+          </dl>
+        </section>
+      </section>
+
+      <footer class="privacy-note">
+        <strong>本机数据边界</strong>
+        <span>界面只能调用 Connector 清单中明确声明的只读操作；页面不能直接访问网络、数据库文件或任意本机接口。</span>
+      </footer>
+    </main>
+  </body>
+</html>

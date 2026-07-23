@@ -1602,11 +1602,31 @@ fn assert_sqlite_healthy(path: &Path) -> Result<(), String> {
 fn find_msg_db_keys(keys: &HashMap<String, Value>) -> Vec<String> {
     let mut output = keys
         .iter()
-        .filter(|(key, value)| value.get("enc_key").is_some() && key.replace('\\', "/").starts_with("message/") && key.ends_with(".db"))
+        .filter(|(key, value)| value.get("enc_key").is_some() && is_message_db_key(key))
         .map(|(key, _)| key.clone())
         .collect::<Vec<_>>();
     output.sort();
     output
+}
+
+fn is_message_db_key(key: &str) -> bool {
+    let normalized = key.replace('\\', "/");
+    let Some(file_name) = normalized.strip_prefix("message/") else {
+        return false;
+    };
+    if file_name.contains('/') {
+        return false;
+    }
+    let Some(stem) = file_name.strip_suffix(".db") else {
+        return false;
+    };
+    let Some(index) = stem
+        .strip_prefix("message_")
+        .or_else(|| stem.strip_prefix("biz_message_"))
+    else {
+        return false;
+    };
+    !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn parse_time_range(start: &Value, end: &Value) -> Result<(Option<i64>, Option<i64>), String> {
@@ -2024,3 +2044,32 @@ unsafe fn libc_getuid() -> u32 {
 
 #[cfg(not(target_family = "unix"))]
 unsafe fn libc_getuid() -> u32 { 0 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_database_keys_exclude_hot_indexes_and_media_databases() {
+        let keys = HashMap::from([
+            ("message/message_0.db".to_string(), json!({"enc_key": "00"})),
+            ("message/biz_message_12.db".to_string(), json!({"enc_key": "00"})),
+            ("message\\message_3.db".to_string(), json!({"enc_key": "00"})),
+            ("message/message_fts.db".to_string(), json!({"enc_key": "00"})),
+            ("message/media_0.db".to_string(), json!({"enc_key": "00"})),
+            ("message/message_resource.db".to_string(), json!({"enc_key": "00"})),
+            ("message/message_x.db".to_string(), json!({"enc_key": "00"})),
+            ("message/nested/message_1.db".to_string(), json!({"enc_key": "00"})),
+            ("message/message_2.db".to_string(), json!({"not_a_key": true})),
+        ]);
+
+        assert_eq!(
+            find_msg_db_keys(&keys),
+            vec![
+                "message/biz_message_12.db".to_string(),
+                "message/message_0.db".to_string(),
+                "message\\message_3.db".to_string(),
+            ]
+        );
+    }
+}

@@ -14,8 +14,22 @@ def test_connector_manifest_references_service_registration():
     assert manifest["serviceRegistrationFiles"] == ["service-registration.json"]
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert manifest["runtime"]["startPolicy"] == "manual"
+    assert manifest["version"] == "0.6.0"
     assert manifest["permissions"][0]["id"] == "macos.fullDiskAccess"
     assert manifest["legacyAutostartLabels"] == ["com.baijimu.wechat-bridge-collector"]
+    assert manifest["ui"] == {
+        "type": "embedded",
+        "entry": "ui/index.html",
+        "title": "微信消息",
+        "defaultView": True,
+    }
+    assert manifest["management"]["auth"]["type"] == "connector_token"
+    assert manifest["management"]["operations"]["getChatHistory"]["path"] == "/management/v1/chat-history"
+    assert manifest["management"]["operations"]["acquireKeys"]["path"] == "/management/v1/acquire-keys"
+    assert manifest["management"]["operations"]["importKeys"]["path"] == "/management/v1/import-keys"
+    assert manifest["management"]["operations"]["retrySetup"]["path"] == "/management/v1/retry-setup"
+    for asset in ("index.html", "app.js", "styles.css"):
+        assert (ROOT / "ui" / asset).is_file()
     assert "installAutostart" not in manifest["hooks"]
 
     registration = json.loads((ROOT / "service-registration.json").read_text(encoding="utf-8"))

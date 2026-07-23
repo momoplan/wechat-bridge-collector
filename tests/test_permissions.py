@@ -7,9 +7,14 @@ from wechat_bridge_collector.wechat_source import WeChatSource
 
 
 def _source(db_dir: Path) -> WeChatSource:
+    class ReadableCache:
+        def get(self, rel_key):
+            return str(db_dir / rel_key)
+
     source = WeChatSource.__new__(WeChatSource)
     source.db_dir = str(db_dir)
     source.msg_db_keys = []
+    source.cache = ReadableCache()
     return source
 
 

@@ -10,6 +10,7 @@ from .bridge import BridgeClient
 from .config import CollectorConfig
 from .query_server import QueryMethodServer
 from .setup_keys import setup_collector
+from .source_runtime import SourceRuntime
 from .state import CollectorState
 from .wechat_source import DatabaseSnapshotError, WeChatSource
 
@@ -109,10 +110,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.incoming_only:
         cfg.include_outgoing = False
 
-    source = WeChatSource(cfg)
-    source.assert_source_access()
-    method_server = QueryMethodServer(cfg, source)
+    source_runtime = SourceRuntime(cfg)
+    method_server = QueryMethodServer(cfg, source_runtime=source_runtime)
     method_server.start()
+    source_runtime.initialize_async()
     bridge = BridgeClient(cfg)
     state = CollectorState.load(cfg.state_path)
     first_start = not cfg.state_path.exists()
@@ -126,13 +127,6 @@ def cmd_run(args: argparse.Namespace) -> int:
                 return 1
             print("registered bridge-agent service methods and events")
 
-        if first_start or args.reset_state:
-            state = CollectorState()
-            source.bootstrap_state(state, backfill_seconds=args.backfill_seconds)
-            state.save(cfg.state_path)
-            if args.backfill_seconds <= 0:
-                print(f"initialized state without historical broadcast: {cfg.state_path}")
-
         print(
             f"collector running service={cfg.service_name}.{cfg.event_name} "
             f"bridge={cfg.bridge_events_url} methods={method_server.base_url} state={cfg.state_path}"
@@ -140,6 +134,21 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         while True:
             try:
+                source = source_runtime.source_or_none()
+                if source is None:
+                    if args.once:
+                        print("source is not ready", file=sys.stderr)
+                        return 1
+                    time.sleep(max(1.0, cfg.poll_interval_secs))
+                    continue
+                if first_start or args.reset_state:
+                    state = CollectorState()
+                    source.bootstrap_state(state, backfill_seconds=args.backfill_seconds)
+                    state.save(cfg.state_path)
+                    first_start = False
+                    args.reset_state = False
+                    if args.backfill_seconds <= 0:
+                        print(f"initialized state without historical broadcast: {cfg.state_path}")
                 current_sessions, changed = source.changed_usernames(state)
                 emitted = 0
                 failed = False

@@ -2,7 +2,7 @@
   "schemaVersion": "1.2",
   "id": "com.baijimu.connector.wechat",
   "name": "WeChat Connector",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
   "publisher": {
     "name": "Baijimu",
@@ -11,7 +11,7 @@
   "source": {
     "type": "github",
     "repo": "momoplan/wechat-bridge-collector",
-    "revision": "v0.4.0"
+    "revision": "v0.6.0"
   },
   "runtime": {
     "type": "process",
@@ -34,6 +34,57 @@
     }
   ],
   "legacyAutostartLabels": ["com.baijimu.wechat-bridge-collector"],
+  "management": {
+    "type": "http",
+    "baseUrl": "http://127.0.0.1:18082",
+    "auth": {
+      "type": "connector_token"
+    },
+    "operations": {
+      "runtimeState": {
+        "method": "GET",
+        "path": "/management/v1/state"
+      },
+      "acquireKeys": {
+        "method": "POST",
+        "path": "/management/v1/acquire-keys"
+      },
+      "importKeys": {
+        "method": "POST",
+        "path": "/management/v1/import-keys"
+      },
+      "retrySetup": {
+        "method": "POST",
+        "path": "/management/v1/retry-setup"
+      },
+      "getRecentSessions": {
+        "method": "POST",
+        "path": "/management/v1/recent-sessions"
+      },
+      "getContacts": {
+        "method": "POST",
+        "path": "/management/v1/contacts"
+      },
+      "getChatHistory": {
+        "method": "POST",
+        "path": "/management/v1/chat-history"
+      },
+      "searchMessages": {
+        "method": "POST",
+        "path": "/management/v1/search"
+      },
+      "getMessageById": {
+        "method": "POST",
+        "path": "/management/v1/message"
+      }
+    }
+  },
+  "ui": {
+    "type": "embedded",
+    "entry": "ui/index.html",
+    "title": "微信消息",
+    "defaultView": true
+  },
   "configSchema": {
     "type": "object",
     "properties": {

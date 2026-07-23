@@ -87,7 +87,7 @@ class DBCache:
         self.db_dir = db_dir
         self.cache_dir = Path(tempfile.gettempdir()) / "wechat_bridge_collector_cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache: dict[str, tuple[float, int, float, int, str]] = {}
+        self._cache: dict[str, tuple[float, int, float, int, str, str]] = {}
         self._metadata_path = self.cache_dir / "_snapshots.json"
         self._load_persistent_cache()
 
@@ -102,12 +102,19 @@ class DBCache:
         signature = self._signature(db_path, wal_path)
         if not signature:
             return None
-        cached = self._cache.get(rel_key)
-        if cached and cached[:4] == signature and Path(cached[4]).exists():
-            return cached[4]
-
-        out_path = str(self.cache_dir / (hashlib.md5(f"{self.db_dir}:{rel_key}".encode()).hexdigest()[:16] + ".db"))
         enc_key = bytes.fromhex(key_info["enc_key"])
+        key_hash = hashlib.sha256(enc_key).hexdigest()[:16]
+        cached = self._cache.get(rel_key)
+        if cached and cached[:4] == signature and cached[4] == key_hash and Path(cached[5]).exists():
+            return cached[5]
+
+        out_path = str(
+            self.cache_dir
+            / (
+                hashlib.md5(f"{self.db_dir}:{rel_key}".encode()).hexdigest()[:16]
+                + f"-{key_hash}.db"
+            )
+        )
         last_error: Exception | None = None
         for attempt in range(3):
             current_signature = self._signature(db_path, wal_path)
@@ -123,7 +130,7 @@ class DBCache:
                     raise DatabaseSnapshotError("source database changed while building decrypted snapshot")
                 self._assert_sqlite_healthy(tmp_path)
                 os.replace(tmp_path, out_path)
-                self._cache[rel_key] = (*after_signature, out_path)
+                self._cache[rel_key] = (*after_signature, key_hash, out_path)
                 self._save_persistent_cache()
                 return out_path
             except (OSError, sqlite3.Error, DatabaseSnapshotError) as exc:
@@ -158,12 +165,16 @@ class DBCache:
             signature = item.get("signature")
             if not isinstance(signature, list) or len(signature) != 4:
                 continue
+            key_hash = str(item.get("keyHash") or "")
+            if not key_hash:
+                continue
             try:
                 self._cache[str(rel_key)] = (
                     float(signature[0]),
                     int(signature[1]),
                     float(signature[2]),
                     int(signature[3]),
+                    key_hash,
                     path,
                 )
             except (TypeError, ValueError):
@@ -173,9 +184,10 @@ class DBCache:
         data = {
             rel_key: {
                 "signature": [db_mtime, db_size, wal_mtime, wal_size],
+                "keyHash": key_hash,
                 "path": path,
             }
-            for rel_key, (db_mtime, db_size, wal_mtime, wal_size, path) in self._cache.items()
+            for rel_key, (db_mtime, db_size, wal_mtime, wal_size, key_hash, path) in self._cache.items()
         }
         tmp_path = self._metadata_path.with_suffix(".tmp")
         try:
@@ -315,8 +327,12 @@ class WeChatSource:
                     continue
                 with source_path.open("rb") as handle:
                     handle.read(1)
-                return
-            raise RuntimeError(f"No readable WeChat database files were found under: {db_dir}")
+                snapshot = self.cache.get(rel_key)
+                if snapshot:
+                    return
+            raise RuntimeError(
+                f"No WeChat database could be decrypted with the configured keys under: {db_dir}"
+            )
         except PermissionError as exc:
             raise _full_disk_access_error() from exc
         except OSError as exc:
