@@ -10,9 +10,9 @@ pipeline {
     parameters {
         string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
         string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
-        string(name: 'CONNECTOR_VERSION', defaultValue: '0.6.0', description: 'WeChat Connector version')
-        string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.1.105', description: 'Minimum compatible Bridge Agent version')
-        booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing refs or market data')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '0.7.0', description: 'WeChat Connector version')
+        string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.1.117', description: 'Minimum compatible Bridge Agent version')
+        booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing Git refs')
     }
 
     stages {
@@ -125,15 +125,6 @@ publish_remote "https://github.com/momoplan/wechat-bridge-collector.git"
             }
         }
 
-        stage('Publish local app market') {
-            when {
-                expression { return !params.DRY_RUN }
-            }
-            steps {
-                sh './publish-market.sh "$CONNECTOR_VERSION" "$SOURCE_COMMIT" "$MIN_BRIDGE_VERSION"'
-            }
-        }
-
         stage('Verify published release') {
             when {
                 expression { return !params.DRY_RUN }
@@ -145,14 +136,9 @@ tag_commit="$(git ls-remote https://github.com/momoplan/wechat-bridge-collector.
 test "$tag_commit" = "$SOURCE_COMMIT"
 for target in 'macos&arch=aarch64' 'windows&arch=x86_64'; do
   payload="$(curl -fsS --retry 3 --connect-timeout 5 --max-time 20 "https://www.baijimu.com/lowcode3/api/local-app-market/apps?platform=${target}")"
-  printf '%s' "$payload" | jq -e --arg version "$CONNECTOR_VERSION" --arg min_bridge "$MIN_BRIDGE_VERSION" '
+  printf '%s' "$payload" | jq -e '
     (if type == "array" then . elif type == "object" and (.data | type) == "array" then .data else [] end)
-    | any(.connectorId == "com.baijimu.connector.wechat"
-      and .latestVersion.version == $version
-      and .latestVersion.revision == ("v" + $version)
-      and .latestVersion.manifest.command == "wechat-bridge-collector-python"
-      and .latestVersion.manifest.startPolicy == "manual"
-      and .latestVersion.manifest.minimumBridgeVersion == $min_bridge)' >/dev/null
+    | all(.connectorId != "com.baijimu.connector.wechat")' >/dev/null
 done
 '''
             }

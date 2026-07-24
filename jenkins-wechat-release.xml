@@ -1,15 +1,15 @@
 <?xml version="1.1" encoding="UTF-8"?>
 <flow-definition plugin="workflow-job">
   <actions/>
-  <description>Jenkins-controlled WeChat Connector Python release and local app market publication.</description>
+  <description>Jenkins-controlled WeChat Connector Python source validation and immutable Git ref publication. The Connector is intentionally not published to the local app market.</description>
   <keepDependencies>false</keepDependencies>
   <properties>
     <hudson.model.ParametersDefinitionProperty>
       <parameterDefinitions>
         <hudson.model.StringParameterDefinition><name>SOURCE_REF</name><defaultValue>main</defaultValue><trim>true</trim></hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition><name>SOURCE_COMMIT</name><defaultValue></defaultValue><trim>true</trim></hudson.model.StringParameterDefinition>
-        <hudson.model.StringParameterDefinition><name>CONNECTOR_VERSION</name><defaultValue>0.4.0</defaultValue><trim>true</trim></hudson.model.StringParameterDefinition>
-        <hudson.model.StringParameterDefinition><name>MIN_BRIDGE_VERSION</name><defaultValue>0.1.105</defaultValue><trim>true</trim></hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition><name>CONNECTOR_VERSION</name><defaultValue>0.7.0</defaultValue><trim>true</trim></hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition><name>MIN_BRIDGE_VERSION</name><defaultValue>0.1.117</defaultValue><trim>true</trim></hudson.model.StringParameterDefinition>
         <hudson.model.BooleanParameterDefinition><name>DRY_RUN</name><defaultValue>true</defaultValue></hudson.model.BooleanParameterDefinition>
       </parameterDefinitions>
     </hudson.model.ParametersDefinitionProperty>
