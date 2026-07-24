@@ -14,7 +14,14 @@ def test_connector_manifest_references_service_registration():
     assert manifest["serviceRegistrationFiles"] == ["service-registration.json"]
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "0.6.0"
+    assert manifest["version"] == "0.7.0"
+    assert manifest["runtime"]["command"].endswith("-python")
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'requires-python = ">=3.12,<3.13"' in pyproject
+    assert (ROOT / "requirements.lock").read_text(encoding="utf-8").splitlines() == [
+        "pycryptodome==3.23.0",
+        "zstandard==0.25.0",
+    ]
     assert manifest["permissions"][0]["id"] == "macos.fullDiskAccess"
     assert manifest["legacyAutostartLabels"] == ["com.baijimu.wechat-bridge-collector"]
     assert manifest["ui"] == {

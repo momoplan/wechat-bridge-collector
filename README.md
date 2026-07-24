@@ -6,6 +6,8 @@
 
 从 `0.6.0` 起 Connector 在百积木应用详情中提供完整的首次运行引导：无密钥时服务仍会启动，用户可在界面中自动获取、导入已有 `all_keys.json` 或重新检测，成功后无需重启即可浏览最近会话、联系人和聊天记录。界面只通过清单声明的 management operation 调用本机服务；所有 `/management/v1/*` 请求都要求 Bridge Agent 管理的私有 Connector token。
 
+从 `0.7.0` 起运行环境统一为客户安装的 Python 3.12.x。百积木只保存解释器绝对路径，并为本 Connector 创建独立的 `.bridge-agent-python` 虚拟环境；依赖严格按 `requirements.lock` 安装，不写入客户的全局 Python。
+
 macOS 上由签名后的百积木桌面应用作为权限宿主启动 Python 子进程。Connector 不再安装或加载 LaunchAgent；这是为了让微信沙盒数据库的访问权限稳定归属到“百积木”，而不是归属到一个无稳定签名身份的独立 Python/launchd 进程。
 
 ## 架构
@@ -43,7 +45,8 @@ bridge-agent connector install /path/to/wechat-bridge-collector --replace
 ## 前置条件
 
 1. 安装并运行 `bridge-agent`。
-2. 克隆本仓库时带上 submodule：
+2. 安装 Python 3.12.x，并在百积木“设置 > 运行环境”中检测、选择并保存 Python 3.12 的绝对路径。
+3. 克隆本仓库时带上 submodule：
 
 ```bash
 git clone --recurse-submodules https://github.com/momoplan/wechat-bridge-collector.git
@@ -56,7 +59,7 @@ cd wechat-bridge-collector
 git submodule update --init --recursive
 ```
 
-3. 初始化 collector 自己的配置和 key：
+4. 初始化 collector 自己的配置和 key：
 
 ```bash
 wechat-bridge-collector setup
@@ -78,7 +81,8 @@ macOS 首次提取 key 可能需要管理员权限；如果系统拦截 `task_fo
 从源码安装 Python collector：
 
 ```bash
-python3 -m pip install -e .
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.lock
 ```
 
 验证读取链路：
