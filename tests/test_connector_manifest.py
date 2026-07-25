@@ -7,14 +7,15 @@ from wechat_bridge_collector.bridge import MESSAGE_EVENT_PAYLOAD_SCHEMA
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_connector_manifest_references_service_registration():
+def test_connector_manifest_declares_local_app_capabilities():
     manifest = json.loads((ROOT / "connector.json").read_text(encoding="utf-8"))
-    assert manifest["schemaVersion"] == "1.2"
+    assert manifest["schemaVersion"] == "2.0"
     assert manifest["id"] == "com.baijimu.connector.wechat"
-    assert manifest["serviceRegistrationFiles"] == ["service-registration.json"]
+    assert "serviceRegistrationFiles" not in manifest
+    assert "services" not in manifest
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "0.7.0"
+    assert manifest["version"] == "1.0.0"
     assert manifest["runtime"]["command"].endswith("-python")
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'requires-python = ">=3.12,<3.13"' in pyproject
@@ -39,20 +40,9 @@ def test_connector_manifest_references_service_registration():
         assert (ROOT / "ui" / asset).is_file()
     assert "installAutostart" not in manifest["hooks"]
 
-    registration = json.loads((ROOT / "service-registration.json").read_text(encoding="utf-8"))
-    assert registration["name"] == "wechatLocal"
-    assert registration["transport"]["type"] == "http"
-    assert registration["startCommand"] == {
-        "type": "shell_command",
-        "command": ["wechat-bridge-collector-python", "start"],
-        "timeoutSecs": 20,
-    }
-    assert registration["stopCommand"] == {
-        "type": "shell_command",
-        "command": ["wechat-bridge-collector-python", "stop"],
-        "timeoutSecs": 20,
-    }
-    assert registration["events"][0]["name"] == "messageReceived"
-    assert registration["events"][0]["payload_schema"] == MESSAGE_EVENT_PAYLOAD_SCHEMA
-    assert "conversationId" in registration["events"][0]["payload_schema"]["properties"]
-    assert "senderName" in registration["events"][0]["payload_schema"]["properties"]
+    assert manifest["transport"]["type"] == "http"
+    assert manifest["runtime"]["stopArgs"] == ["stop"]
+    assert manifest["events"][0]["name"] == "messageReceived"
+    assert manifest["events"][0]["payload_schema"] == MESSAGE_EVENT_PAYLOAD_SCHEMA
+    assert "conversationId" in manifest["events"][0]["payload_schema"]["properties"]
+    assert "senderName" in manifest["events"][0]["payload_schema"]["properties"]

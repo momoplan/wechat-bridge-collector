@@ -1,6 +1,6 @@
 # WeChat Bridge Collector
 
-跨平台微信本地消息采集器和只读查询服务。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 的 key 提取能力，然后把新消息作为 bridge-agent 事件广播出去，同时向 bridge-agent 注册本机 HTTP methods 用于查询最近会话、联系人、聊天记录和消息搜索。
+跨平台微信本地消息采集器和只读查询应用。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 的 key 提取能力，然后把新消息作为设备上的本地应用事件交给 Bridge Agent；查询方法由 `connector.json` 直接声明。
 
 从 `0.4.0` 起官方 Connector 固定使用 Python 入口 `wechat-bridge-collector-python`。仓库中保留的 Rust 实验代码和旧二进制不参与 Connector 启动解析，也不是官方市场运行路径。
 
@@ -17,7 +17,7 @@ WeChat local DB/WAL
   -> ~/.wechat-bridge-collector/all_keys.json
   -> wechat-bridge-collector
   -> http://127.0.0.1:18082/invoke/*
-  -> POST http://127.0.0.1:18081/v1/events
+  -> POST http://127.0.0.1:18081/v1/local-app-events
   -> bridge-agent websocket
   -> relay subscribers
 ```
@@ -32,7 +32,10 @@ collector 不直接连接 relay，也不修改微信数据。
 bridge-agent connector install /path/to/wechat-bridge-collector --replace
 ```
 
-安装器会读取 `connector.json`，再引用 `service-registration.json` 注册 `wechatLocal` 服务。安装后按下面顺序操作：
+安装器读取 `schemaVersion: "2.0"` 的 `connector.json`，以
+`connectorId=com.baijimu.connector.wechat` 创建一个本地应用。methods、events、
+healthCheck 和启停命令都直接属于这个应用，不创建 runtime service，也不生成
+businessId。安装后按下面顺序操作：
 
 - 在 macOS“隐私与安全性 > 完全磁盘访问”中启用“百积木”并重启百积木
 - `wechat-bridge-collector-python setup`
@@ -100,30 +103,21 @@ export WECHAT_DECRYPT_DIR=/path/to/wechat-decrypt
 
 `--keys-file` 仍可用于高级场景，但默认不会读取其它工具的目录。
 
-注册 bridge-agent 事件声明：
-
-```bash
-wechat-bridge-collector register
-```
-
-如果 Bridge Agent 使用默认本机地址，collector 会自动读取本机 Bridge Agent 配置里的
-`runtime.service_registration_token` 和 `runtime.event_server_token`。需要覆盖时可使用：
-
-```bash
-export BRIDGE_AGENT_SERVICE_REGISTRATION_TOKEN=...
-export BRIDGE_AGENT_EVENT_TOKEN=...
-```
+由 Bridge Agent 启动时，collector 通过
+`BAIJIMU_CONNECTOR_EVENT_TOKEN_FILE` 获得该 Connector 独立的事件发布凭证，通过
+`BAIJIMU_CONNECTOR_EVENT_ENDPOINT` 获得事件入口。调试时也可以使用
+`--event-token` 显式提供凭证。
 
 启动采集器：
 
 ```bash
-wechat-bridge-collector run --register
+wechat-bridge-collector run
 ```
 
 `run` 会同时启动本机只读 method server，默认地址是 `http://127.0.0.1:18082`。需要换端口时：
 
 ```bash
-wechat-bridge-collector --method-port 18083 run --register
+wechat-bridge-collector --method-port 18083 run
 ```
 
 首次启动默认只建立当前游标，不广播历史消息。需要回放最近历史时显式指定：
@@ -146,7 +140,7 @@ wechat-bridge-collector-python stop
 - Windows：渲染并执行 `wechat_bridge_collector/scripts/windows/start-collector.ps1`。
 - Linux：当前未提供后台启动集成。
 
-Bridge Agent 注册时的 `startCommand` 会统一指向：
+Connector 清单中的 `runtime` 启动命令会统一解析为：
 
 ```bash
 python -m wechat_bridge_collector start
@@ -156,9 +150,9 @@ Connector 的 `runtime.startPolicy` 是 `manual`。Bridge Agent 构建运行时�
 
 ## 事件
 
-默认服务和事件名：
+默认本地应用和事件名：
 
-- service: `wechatLocal`
+- connectorId: `com.baijimu.connector.wechat`
 - event: `messageReceived`
 
 payload 示例：
@@ -184,9 +178,9 @@ payload 示例：
 
 ## 查询方法
 
-`wechat-bridge-collector run --register` 会向 bridge-agent 注册以下 methods：
+`connector.json` 直接声明以下 methods：
 
-注册 payload 同时包含：
+同一份 Connector 清单同时包含：
 
 - `healthCheck`：`GET /health`，供 Bridge Agent 小客户端展示采集器是否可用。
 - `startCommand`：通过 Python 入口启动采集器。

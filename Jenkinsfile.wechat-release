@@ -10,7 +10,7 @@ pipeline {
     parameters {
         string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
         string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
-        string(name: 'CONNECTOR_VERSION', defaultValue: '0.7.0', description: 'WeChat Connector version')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '1.0.0', description: 'WeChat Connector version')
         string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.1.117', description: 'Minimum compatible Bridge Agent version')
         booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing Git refs')
     }
@@ -23,7 +23,7 @@ set -euo pipefail
 test -n "$SOURCE_COMMIT"
 test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
 test "$(jq -r '.version' connector.json)" = "$CONNECTOR_VERSION"
-test "$(jq -r '.schemaVersion' connector.json)" = "1.2"
+test "$(jq -r '.schemaVersion' connector.json)" = "2.0"
 test "$(jq -r '.runtime.command' connector.json)" = "wechat-bridge-collector-python"
 test "$(jq -r '.runtime.startPolicy' connector.json)" = "manual"
 test "$(jq -r '.ui.entry' connector.json)" = "ui/index.html"
@@ -54,7 +54,8 @@ PYTHONPATH="$release_python:$WORKSPACE" python3 -m pytest -q
 python3 -m py_compile wechat_bridge_collector/*.py
 bash -n agent-skill/scripts/setup_macos.sh
 jq -e . connector.json >/dev/null
-jq -e . service-registration.json >/dev/null
+test "$(jq -r '.transport.type' connector.json)" = "http"
+test "$(jq -r '.events[0].name' connector.json)" = "messageReceived"
 test -f ui/index.html
 test -f ui/app.js
 test -f ui/styles.css

@@ -36,8 +36,8 @@ const WAL_FRAME_HEADER_SZ: usize = 24;
 struct CollectorConfig {
     #[serde(default = "default_bridge_base_url")]
     bridge_base_url: String,
-    #[serde(default = "default_service_name")]
-    service_name: String,
+    #[serde(default = "default_connector_id")]
+    connector_id: String,
     #[serde(default = "default_event_name")]
     event_name: String,
     #[serde(default = "default_poll_interval")]
@@ -52,8 +52,6 @@ struct CollectorConfig {
     method_port: u16,
     #[serde(default)]
     bridge_event_token: Option<String>,
-    #[serde(default)]
-    service_registration_token: Option<String>,
     #[serde(default)]
     wechat_decrypt_dir: Option<String>,
     #[serde(default)]
@@ -74,7 +72,7 @@ impl Default for CollectorConfig {
     fn default() -> Self {
         Self {
             bridge_base_url: default_bridge_base_url(),
-            service_name: default_service_name(),
+            connector_id: default_connector_id(),
             event_name: default_event_name(),
             poll_interval_secs: default_poll_interval(),
             batch_size: default_batch_size(),
@@ -82,7 +80,6 @@ impl Default for CollectorConfig {
             method_host: default_method_host(),
             method_port: default_method_port(),
             bridge_event_token: None,
-            service_registration_token: None,
             wechat_decrypt_dir: None,
             wechat_decrypt_config: None,
             db_dir: None,
@@ -96,7 +93,9 @@ impl Default for CollectorConfig {
 
 impl CollectorConfig {
     fn load(path: Option<&str>) -> Result<Self, String> {
-        let path = path.map(expand_home).unwrap_or_else(|| default_state_dir().join("config.json"));
+        let path = path
+            .map(expand_home)
+            .unwrap_or_else(|| default_state_dir().join("config.json"));
         let mut cfg = if path.exists() {
             serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?
@@ -104,23 +103,12 @@ impl CollectorConfig {
             Self::default()
         };
 
-        if let Ok(value) = env::var("BRIDGE_AGENT_EVENT_TOKEN") {
-            if !value.is_empty() {
-                cfg.bridge_event_token = Some(value);
-            }
-        }
-        if let Ok(value) = env::var("BRIDGE_AGENT_SERVICE_REGISTRATION_TOKEN") {
-            if !value.is_empty() {
-                cfg.service_registration_token = Some(value);
-            }
-        }
-        if is_loopback_url(&cfg.bridge_base_url) {
-            let tokens = load_bridge_agent_tokens();
-            if cfg.bridge_event_token.as_deref().unwrap_or("").is_empty() {
-                cfg.bridge_event_token = tokens.get("event_server_token").cloned();
-            }
-            if cfg.service_registration_token.as_deref().unwrap_or("").is_empty() {
-                cfg.service_registration_token = tokens.get("service_registration_token").cloned();
+        if let Ok(path) = env::var("BAIJIMU_CONNECTOR_EVENT_TOKEN_FILE") {
+            if let Ok(value) = fs::read_to_string(path) {
+                let value = value.trim();
+                if !value.is_empty() {
+                    cfg.bridge_event_token = Some(value.to_string());
+                }
             }
         }
         if let Ok(value) = env::var("WECHAT_DECRYPT_DIR") {
@@ -166,11 +154,12 @@ impl CollectorConfig {
     }
 
     fn bridge_events_url(&self) -> String {
-        format!("{}/v1/events", self.bridge_base_url.trim_end_matches('/'))
-    }
-
-    fn bridge_services_url(&self) -> String {
-        format!("{}/v1/services", self.bridge_base_url.trim_end_matches('/'))
+        env::var("BAIJIMU_CONNECTOR_EVENT_ENDPOINT").unwrap_or_else(|_| {
+            format!(
+                "{}/v1/local-app-events",
+                self.bridge_base_url.trim_end_matches('/')
+            )
+        })
     }
 
     fn resolved_wechat_decrypt_dir(&self) -> Result<PathBuf, String> {
@@ -198,7 +187,8 @@ impl CollectorConfig {
         let raw = if let Some(path) = &self.wechat_decrypt_config {
             let path = expand_home(path);
             if path.exists() {
-                serde_json::from_str::<Value>(&fs::read_to_string(path).map_err(|e| e.to_string())?).unwrap_or_else(|_| json!({}))
+                serde_json::from_str::<Value>(&fs::read_to_string(path).map_err(|e| e.to_string())?)
+                    .unwrap_or_else(|_| json!({}))
             } else {
                 json!({})
             }
@@ -216,12 +206,16 @@ impl CollectorConfig {
             wechat_decrypt_dir: wd_dir,
             db_dir: expand_home(&db_dir),
             keys_file: resolve_state_path(
-                self.keys_file.as_deref().or_else(|| raw.get("keys_file").and_then(Value::as_str)),
+                self.keys_file
+                    .as_deref()
+                    .or_else(|| raw.get("keys_file").and_then(Value::as_str)),
                 &self.state_dir_path(),
                 self.default_keys_path(),
             ),
             _decrypted_dir: resolve_state_path(
-                self.decrypted_dir.as_deref().or_else(|| raw.get("decrypted_dir").and_then(Value::as_str)),
+                self.decrypted_dir
+                    .as_deref()
+                    .or_else(|| raw.get("decrypted_dir").and_then(Value::as_str)),
                 &self.state_dir_path(),
                 self.default_decrypted_path(),
             ),
@@ -277,8 +271,15 @@ impl CollectorState {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let tmp = path.with_extension(format!("{}tmp", path.extension().and_then(|v| v.to_str()).unwrap_or("json.")));
-        fs::write(&tmp, serde_json::to_string_pretty(self).map_err(|e| e.to_string())? + "\n").map_err(|e| e.to_string())?;
+        let tmp = path.with_extension(format!(
+            "{}tmp",
+            path.extension().and_then(|v| v.to_str()).unwrap_or("json.")
+        ));
+        fs::write(
+            &tmp,
+            serde_json::to_string_pretty(self).map_err(|e| e.to_string())? + "\n",
+        )
+        .map_err(|e| e.to_string())?;
         fs::rename(tmp, path).map_err(|e| e.to_string())
     }
 
@@ -292,7 +293,13 @@ impl CollectorState {
                 return;
             }
         }
-        self.cursors.insert(key, Cursor { create_time, local_id });
+        self.cursors.insert(
+            key,
+            Cursor {
+                create_time,
+                local_id,
+            },
+        );
     }
 }
 
@@ -348,17 +355,29 @@ impl DBCache {
         let Some(signature) = file_sig4(&db_path, &wal_path) else {
             return Ok(None);
         };
-        if let Some((cached_sig, path)) = self.cache.lock().map_err(|e| e.to_string())?.get(rel_key).cloned() {
+        if let Some((cached_sig, path)) = self
+            .cache
+            .lock()
+            .map_err(|e| e.to_string())?
+            .get(rel_key)
+            .cloned()
+        {
             if cached_sig == signature && path.exists() {
                 return Ok(Some(path));
             }
         }
 
-        let out_path = self.cache_dir.join(format!("{:x}.db", md5::compute(format!("{}:{rel_key}", self.db_dir.display()))));
+        let out_path = self.cache_dir.join(format!(
+            "{:x}.db",
+            md5::compute(format!("{}:{rel_key}", self.db_dir.display()))
+        ));
         if key_info.get("plain").and_then(Value::as_bool) == Some(true) {
             fs::copy(&db_path, &out_path).map_err(|e| e.to_string())?;
             assert_sqlite_healthy(&out_path)?;
-            self.cache.lock().map_err(|e| e.to_string())?.insert(rel_key.to_string(), (signature, out_path.clone()));
+            self.cache
+                .lock()
+                .map_err(|e| e.to_string())?
+                .insert(rel_key.to_string(), (signature, out_path.clone()));
             self.save_persistent_cache();
             return Ok(Some(out_path));
         }
@@ -373,9 +392,20 @@ impl DBCache {
             let Some(current_sig) = file_sig4(&db_path, &wal_path) else {
                 return Ok(None);
             };
-            let tmp_path = self.cache_dir.join(format!(".{:x}.{}.{}.tmp", md5::compute(rel_key), std::process::id(), attempt));
+            let tmp_path = self.cache_dir.join(format!(
+                ".{:x}.{}.{}.tmp",
+                md5::compute(rel_key),
+                std::process::id(),
+                attempt
+            ));
             match full_decrypt(&db_path, &tmp_path, &enc_key)
-                .and_then(|_| if wal_path.exists() { decrypt_wal(&wal_path, &tmp_path, &enc_key) } else { Ok(()) })
+                .and_then(|_| {
+                    if wal_path.exists() {
+                        decrypt_wal(&wal_path, &tmp_path, &enc_key)
+                    } else {
+                        Ok(())
+                    }
+                })
                 .and_then(|_| {
                     if file_sig4(&db_path, &wal_path) != Some(current_sig) {
                         Err("source database changed while building decrypted snapshot".to_string())
@@ -385,7 +415,10 @@ impl DBCache {
                 }) {
                 Ok(()) => {
                     fs::rename(&tmp_path, &out_path).map_err(|e| e.to_string())?;
-                    self.cache.lock().map_err(|e| e.to_string())?.insert(rel_key.to_string(), (current_sig, out_path.clone()));
+                    self.cache
+                        .lock()
+                        .map_err(|e| e.to_string())?
+                        .insert(rel_key.to_string(), (current_sig, out_path.clone()));
                     self.save_persistent_cache();
                     return Ok(Some(out_path));
                 }
@@ -396,7 +429,9 @@ impl DBCache {
                 }
             }
         }
-        Err(format!("failed to build healthy SQLite snapshot for {rel_key}: {last_error}"))
+        Err(format!(
+            "failed to build healthy SQLite snapshot for {rel_key}: {last_error}"
+        ))
     }
 
     fn key_info(&self, rel_key: &str) -> Option<Value> {
@@ -442,11 +477,22 @@ impl DBCache {
             if sig.len() != 4 {
                 continue;
             }
-            let Some(db_mtime) = sig[0].as_f64() else { continue; };
-            let Some(db_size) = sig[1].as_u64() else { continue; };
-            let Some(wal_mtime) = sig[2].as_f64() else { continue; };
-            let Some(wal_size) = sig[3].as_u64() else { continue; };
-            cache.insert(rel_key.clone(), (FileSig4(db_mtime, db_size, wal_mtime, wal_size), path));
+            let Some(db_mtime) = sig[0].as_f64() else {
+                continue;
+            };
+            let Some(db_size) = sig[1].as_u64() else {
+                continue;
+            };
+            let Some(wal_mtime) = sig[2].as_f64() else {
+                continue;
+            };
+            let Some(wal_size) = sig[3].as_u64() else {
+                continue;
+            };
+            cache.insert(
+                rel_key.clone(),
+                (FileSig4(db_mtime, db_size, wal_mtime, wal_size), path),
+            );
         }
     }
 
@@ -457,7 +503,10 @@ impl DBCache {
         };
         let mut data = Map::new();
         for (rel_key, (FileSig4(a, b, c, d), path)) in cache.iter() {
-            data.insert(rel_key.clone(), json!({"signature": [a, b, c, d], "path": path}));
+            data.insert(
+                rel_key.clone(),
+                json!({"signature": [a, b, c, d], "path": path}),
+            );
         }
         let tmp = self.metadata_path.with_extension("tmp");
         if fs::write(&tmp, Value::Object(data).to_string()).is_ok() {
@@ -481,9 +530,15 @@ impl WeChatSource {
     fn new(config: CollectorConfig) -> Result<Self, String> {
         let runtime = config.load_wechat_runtime()?;
         if !runtime.keys_file.exists() {
-            return Err(format!("wechat-decrypt keys file does not exist: {}. Run setup first.", runtime.keys_file.display()));
+            return Err(format!(
+                "wechat-decrypt keys file does not exist: {}. Run setup first.",
+                runtime.keys_file.display()
+            ));
         }
-        let raw: Value = serde_json::from_str(&fs::read_to_string(&runtime.keys_file).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        let raw: Value = serde_json::from_str(
+            &fs::read_to_string(&runtime.keys_file).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
         let mut all_keys = HashMap::new();
         if let Some(obj) = raw.as_object() {
             for (key, value) in obj {
@@ -551,15 +606,40 @@ impl WeChatSource {
             .into_iter()
             .filter(|item| {
                 query.is_empty()
-                    || ["username", "displayName", "nickName", "remark"].iter().any(|key| {
-                        item.get(*key).and_then(Value::as_str).unwrap_or("").to_lowercase().contains(&query)
-                    })
+                    || ["username", "displayName", "nickName", "remark"]
+                        .iter()
+                        .any(|key| {
+                            item.get(*key)
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_lowercase()
+                                .contains(&query)
+                        })
             })
             .collect::<Vec<_>>();
         contacts.sort_by(|a, b| {
-            let ar = a.get("remark").and_then(Value::as_str).unwrap_or("").is_empty();
-            let br = b.get("remark").and_then(Value::as_str).unwrap_or("").is_empty();
-            ar.cmp(&br).then_with(|| a.get("displayName").and_then(Value::as_str).unwrap_or("").to_lowercase().cmp(&b.get("displayName").and_then(Value::as_str).unwrap_or("").to_lowercase()))
+            let ar = a
+                .get("remark")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .is_empty();
+            let br = b
+                .get("remark")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .is_empty();
+            ar.cmp(&br).then_with(|| {
+                a.get("displayName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .cmp(
+                        &b.get("displayName")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_lowercase(),
+                    )
+            })
         });
         contacts.truncate(normalize_limit(limit, 100_000));
         contacts
@@ -585,13 +665,23 @@ impl WeChatSource {
                     let username: String = row.get(0)?;
                     let nick: Option<String> = row.get(1)?;
                     let remark: Option<String> = row.get(2)?;
-                    Ok((username, nick.unwrap_or_default(), remark.unwrap_or_default()))
+                    Ok((
+                        username,
+                        nick.unwrap_or_default(),
+                        remark.unwrap_or_default(),
+                    ))
                 }) {
                     for row in rows.flatten() {
                         if row.0.is_empty() {
                             continue;
                         }
-                        let display = if !row.2.is_empty() { row.2.clone() } else if !row.1.is_empty() { row.1.clone() } else { row.0.clone() };
+                        let display = if !row.2.is_empty() {
+                            row.2.clone()
+                        } else if !row.1.is_empty() {
+                            row.1.clone()
+                        } else {
+                            row.0.clone()
+                        };
                         contacts.push(json!({
                             "username": row.0,
                             "displayName": display,
@@ -624,8 +714,12 @@ impl WeChatSource {
         }
         let mut state = BTreeMap::new();
         if let Ok(conn) = Connection::open(path) {
-            if let Ok(mut stmt) = conn.prepare("SELECT username, last_timestamp FROM SessionTable WHERE last_timestamp > 0") {
-                if let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))) {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT username, last_timestamp FROM SessionTable WHERE last_timestamp > 0",
+            ) {
+                if let Ok(rows) = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                }) {
                     for row in rows.flatten() {
                         if !row.0.is_empty() {
                             state.insert(row.0, row.1);
@@ -650,12 +744,18 @@ impl WeChatSource {
         if let Ok(conn) = Connection::open(path) {
             let sql = "SELECT username, unread_count, summary, last_timestamp, last_msg_type, last_msg_sender, last_sender_display_name FROM SessionTable WHERE last_timestamp > 0 ORDER BY last_timestamp DESC LIMIT ?";
             let fallback = "SELECT username, 0, '', last_timestamp, 0, '', '' FROM SessionTable WHERE last_timestamp > 0 ORDER BY last_timestamp DESC LIMIT ?";
-            let rows = query_session_rows(&conn, sql, normalize_limit(limit, 200)).or_else(|_| query_session_rows(&conn, fallback, normalize_limit(limit, 200))).unwrap_or_default();
+            let rows = query_session_rows(&conn, sql, normalize_limit(limit, 200))
+                .or_else(|_| query_session_rows(&conn, fallback, normalize_limit(limit, 200)))
+                .unwrap_or_default();
             for row in rows {
                 let is_group = row.username.contains("@chatroom");
                 let summary = decompress_content(row.summary, None).unwrap_or_default();
                 let (sender_from_content, text) = parse_message_content(&summary, is_group);
-                let sender_id = if !row.last_msg_sender.is_empty() { row.last_msg_sender } else { sender_from_content };
+                let sender_id = if !row.last_msg_sender.is_empty() {
+                    row.last_msg_sender
+                } else {
+                    sender_from_content
+                };
                 let (type_name, _) = type_label(row.last_msg_type & 0xFFFF_FFFF);
                 sessions.push(json!({
                     "conversationId": row.username,
@@ -677,18 +777,35 @@ impl WeChatSource {
     fn bootstrap_state(&self, state: &mut CollectorState, backfill_seconds: i64) {
         state.sessions = self.read_session_state();
         let fixed = if backfill_seconds > 0 {
-            Some(Cursor { create_time: Utc::now().timestamp() - backfill_seconds, local_id: 0 })
+            Some(Cursor {
+                create_time: Utc::now().timestamp() - backfill_seconds,
+                local_id: 0,
+            })
         } else {
             None
         };
         for rel_key in &self.msg_db_keys {
-            let Ok(Some(path)) = self.cache.get(rel_key) else { continue; };
-            let Ok(conn) = Connection::open(path) else { continue; };
-            let Ok(mut stmt) = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'") else { continue; };
-            let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) else { continue; };
+            let Ok(Some(path)) = self.cache.get(rel_key) else {
+                continue;
+            };
+            let Ok(conn) = Connection::open(path) else {
+                continue;
+            };
+            let Ok(mut stmt) = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'")
+            else {
+                continue;
+            };
+            let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) else {
+                continue;
+            };
             for table in rows.flatten().filter(|name| is_msg_table(name)) {
                 let cursor = fixed.clone().unwrap_or_else(|| max_cursor(&conn, &table));
-                state.set_cursor(cursor_key(rel_key, &table), cursor.create_time, cursor.local_id);
+                state.set_cursor(
+                    cursor_key(rel_key, &table),
+                    cursor.create_time,
+                    cursor.local_id,
+                );
             }
         }
     }
@@ -703,25 +820,56 @@ impl WeChatSource {
         (current, changed)
     }
 
-    fn iter_new_messages(&self, state: &CollectorState, usernames: &[String], batch_size: usize) -> Vec<MessageCandidate> {
+    fn iter_new_messages(
+        &self,
+        state: &CollectorState,
+        usernames: &[String],
+        batch_size: usize,
+    ) -> Vec<MessageCandidate> {
         let names = self.contact_names();
         let mut output = Vec::new();
         for username in usernames {
             for (rel_key, table_name, path) in self.message_tables_for_username(username) {
                 let cursor = state.cursor_for(&cursor_key(&rel_key, &table_name));
-                output.extend(self.query_table(&path, &rel_key, &table_name, username, &names, &cursor, batch_size));
+                output.extend(self.query_table(
+                    &path,
+                    &rel_key,
+                    &table_name,
+                    username,
+                    &names,
+                    &cursor,
+                    batch_size,
+                ));
             }
         }
         output
     }
 
-    fn get_chat_history(&self, conversation_id: &str, limit: usize, offset: usize, start_time: &Value, end_time: &Value, oldest_first: bool, message_types: Option<&Value>) -> Result<Value, String> {
+    fn get_chat_history(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+        offset: usize,
+        start_time: &Value,
+        end_time: &Value,
+        oldest_first: bool,
+        message_types: Option<&Value>,
+    ) -> Result<Value, String> {
         let ctx = self.conversation_context(conversation_id)?;
         let cid = ctx["conversationId"].as_str().unwrap_or("");
         self.require_message_tables(cid)?;
         let type_filter = resolve_type_filter(message_types)?;
         let (start_ts, end_ts) = parse_time_range(start_time, end_time)?;
-        let messages = self.query_messages_for_username(cid, limit, offset, start_ts, end_ts, oldest_first, "", type_filter);
+        let messages = self.query_messages_for_username(
+            cid,
+            limit,
+            offset,
+            start_ts,
+            end_ts,
+            oldest_first,
+            "",
+            type_filter,
+        );
         Ok(json!({
             "conversation": ctx,
             "messages": messages,
@@ -731,7 +879,15 @@ impl WeChatSource {
         }))
     }
 
-    fn search_messages(&self, keyword: &str, conversation_id: &str, limit: usize, offset: usize, start_time: &Value, end_time: &Value) -> Result<Value, String> {
+    fn search_messages(
+        &self,
+        keyword: &str,
+        conversation_id: &str,
+        limit: usize,
+        offset: usize,
+        start_time: &Value,
+        end_time: &Value,
+    ) -> Result<Value, String> {
         let keyword = keyword.trim();
         if keyword.is_empty() {
             return Err("keyword 不能为空".to_string());
@@ -747,11 +903,26 @@ impl WeChatSource {
         };
         let mut all = Vec::new();
         for username in usernames {
-            all.extend(self.query_messages_for_username(&username, normalize_limit(limit, 500) + offset, 0, start_ts, end_ts, false, keyword, None));
+            all.extend(self.query_messages_for_username(
+                &username,
+                normalize_limit(limit, 500) + offset,
+                0,
+                start_ts,
+                end_ts,
+                false,
+                keyword,
+                None,
+            ));
         }
         all.sort_by(|a, b| message_sort_key(b).cmp(&message_sort_key(a)));
-        let page = all.into_iter().skip(offset).take(normalize_limit(limit, 500)).collect::<Vec<_>>();
-        Ok(json!({"conversation": ctx, "keyword": keyword, "messages": page, "limit": normalize_limit(limit, 500), "offset": offset, "hasMoreHint": page.len() >= normalize_limit(limit, 500)}))
+        let page = all
+            .into_iter()
+            .skip(offset)
+            .take(normalize_limit(limit, 500))
+            .collect::<Vec<_>>();
+        Ok(
+            json!({"conversation": ctx, "keyword": keyword, "messages": page, "limit": normalize_limit(limit, 500), "offset": offset, "hasMoreHint": page.len() >= normalize_limit(limit, 500)}),
+        )
     }
 
     fn get_message_by_id(&self, message_id: &str) -> Result<Value, String> {
@@ -770,8 +941,23 @@ impl WeChatSource {
         let Some(row) = row else {
             return Ok(Value::Null);
         };
-        let username = if username.is_empty() { self.username_for_message_row(&row, &names).unwrap_or_default() } else { username };
-        Ok(self.build_candidate(row, &rel_key, &table_name, &username, &names, &id_to_username).map(|c| c.payload).unwrap_or(Value::Null))
+        let username = if username.is_empty() {
+            self.username_for_message_row(&row, &names)
+                .unwrap_or_default()
+        } else {
+            username
+        };
+        Ok(self
+            .build_candidate(
+                row,
+                &rel_key,
+                &table_name,
+                &username,
+                &names,
+                &id_to_username,
+            )
+            .map(|c| c.payload)
+            .unwrap_or(Value::Null))
     }
 
     fn conversation_context(&self, conversation_id: &str) -> Result<Value, String> {
@@ -796,13 +982,20 @@ impl WeChatSource {
     }
 
     fn known_conversation_ids(&self) -> Vec<String> {
-        let mut set = self.read_session_state().keys().cloned().collect::<HashSet<_>>();
+        let mut set = self
+            .read_session_state()
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
         for contact in self.all_contacts().0 {
             if let Some(username) = contact.get("username").and_then(Value::as_str) {
                 set.insert(username.to_string());
             }
         }
-        let mut items = set.into_iter().filter(|v| !v.is_empty()).collect::<Vec<_>>();
+        let mut items = set
+            .into_iter()
+            .filter(|v| !v.is_empty())
+            .collect::<Vec<_>>();
         items.sort();
         items
     }
@@ -811,10 +1004,18 @@ impl WeChatSource {
         let table_name = format!("Msg_{:x}", md5::compute(username.as_bytes()));
         let mut matches = Vec::new();
         for rel_key in &self.msg_db_keys {
-            let Ok(Some(path)) = self.cache.get(rel_key) else { continue; };
-            let Ok(conn) = Connection::open(&path) else { continue; };
+            let Ok(Some(path)) = self.cache.get(rel_key) else {
+                continue;
+            };
+            let Ok(conn) = Connection::open(&path) else {
+                continue;
+            };
             let exists = conn
-                .query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", params![table_name], |_| Ok(()))
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                    params![table_name],
+                    |_| Ok(()),
+                )
                 .is_ok();
             if exists {
                 matches.push((rel_key.clone(), table_name.clone(), path));
@@ -823,16 +1024,49 @@ impl WeChatSource {
         matches
     }
 
-    fn query_messages_for_username(&self, username: &str, limit: usize, offset: usize, start_ts: Option<i64>, end_ts: Option<i64>, oldest_first: bool, keyword: &str, type_filter: Option<HashSet<i64>>) -> Vec<Value> {
+    fn query_messages_for_username(
+        &self,
+        username: &str,
+        limit: usize,
+        offset: usize,
+        start_ts: Option<i64>,
+        end_ts: Option<i64>,
+        oldest_first: bool,
+        keyword: &str,
+        type_filter: Option<HashSet<i64>>,
+    ) -> Vec<Value> {
         let names = self.contact_names();
         let mut collected = Vec::new();
         let candidate_limit = normalize_limit(limit, 500) + offset;
         for (rel_key, table_name, path) in self.message_tables_for_username(username) {
-            let Ok(conn) = Connection::open(path) else { continue; };
+            let Ok(conn) = Connection::open(path) else {
+                continue;
+            };
             let id_to_username = load_name2id_maps(&conn);
-            for row in query_table_rows(&conn, &table_name, start_ts, end_ts, type_filter.as_ref(), candidate_limit, oldest_first) {
-                let Some(candidate) = self.build_candidate(row, &rel_key, &table_name, username, &names, &id_to_username) else { continue; };
-                let text = candidate.payload.get("text").and_then(Value::as_str).unwrap_or("");
+            for row in query_table_rows(
+                &conn,
+                &table_name,
+                start_ts,
+                end_ts,
+                type_filter.as_ref(),
+                candidate_limit,
+                oldest_first,
+            ) {
+                let Some(candidate) = self.build_candidate(
+                    row,
+                    &rel_key,
+                    &table_name,
+                    username,
+                    &names,
+                    &id_to_username,
+                ) else {
+                    continue;
+                };
+                let text = candidate
+                    .payload
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 if keyword.is_empty() || text.to_lowercase().contains(&keyword.to_lowercase()) {
                     collected.push(candidate.payload);
                 }
@@ -843,10 +1077,23 @@ impl WeChatSource {
         } else {
             collected.sort_by(|a, b| message_sort_key(b).cmp(&message_sort_key(a)));
         }
-        collected.into_iter().skip(offset).take(normalize_limit(limit, 500)).collect()
+        collected
+            .into_iter()
+            .skip(offset)
+            .take(normalize_limit(limit, 500))
+            .collect()
     }
 
-    fn query_table(&self, db_path: &Path, rel_key: &str, table_name: &str, username: &str, names: &BTreeMap<String, String>, cursor: &Cursor, batch_size: usize) -> Vec<MessageCandidate> {
+    fn query_table(
+        &self,
+        db_path: &Path,
+        rel_key: &str,
+        table_name: &str,
+        username: &str,
+        names: &BTreeMap<String, String>,
+        cursor: &Cursor,
+        batch_size: usize,
+    ) -> Vec<MessageCandidate> {
         let Ok(conn) = Connection::open(db_path) else {
             return Vec::new();
         };
@@ -859,9 +1106,24 @@ impl WeChatSource {
         );
         let mut output = Vec::new();
         if let Ok(mut stmt) = conn.prepare(&sql) {
-            if let Ok(rows) = stmt.query_map(params![cursor.create_time, cursor.create_time, cursor.local_id, batch_size as i64], message_row_from_row) {
+            if let Ok(rows) = stmt.query_map(
+                params![
+                    cursor.create_time,
+                    cursor.create_time,
+                    cursor.local_id,
+                    batch_size as i64
+                ],
+                message_row_from_row,
+            ) {
                 for row in rows.flatten() {
-                    if let Some(candidate) = self.build_candidate(row, rel_key, table_name, username, names, &id_to_username) {
+                    if let Some(candidate) = self.build_candidate(
+                        row,
+                        rel_key,
+                        table_name,
+                        username,
+                        names,
+                        &id_to_username,
+                    ) {
                         output.push(candidate);
                     }
                 }
@@ -870,12 +1132,27 @@ impl WeChatSource {
         output
     }
 
-    fn build_candidate(&self, row: MessageRow, rel_key: &str, table_name: &str, username: &str, names: &BTreeMap<String, String>, id_to_username: &HashMap<i64, String>) -> Option<MessageCandidate> {
+    fn build_candidate(
+        &self,
+        row: MessageRow,
+        rel_key: &str,
+        table_name: &str,
+        username: &str,
+        names: &BTreeMap<String, String>,
+        id_to_username: &HashMap<i64, String>,
+    ) -> Option<MessageCandidate> {
         let content = decompress_content(row.message_content, row.ct).unwrap_or_default();
         let is_group = username.contains("@chatroom");
         let (sender_from_content, text) = parse_message_content(&content, is_group);
-        let sender_username = id_to_username.get(&row.real_sender_id).cloned().unwrap_or_default();
-        let sender_username = if sender_username.is_empty() { sender_from_content } else { sender_username };
+        let sender_username = id_to_username
+            .get(&row.real_sender_id)
+            .cloned()
+            .unwrap_or_default();
+        let sender_username = if sender_username.is_empty() {
+            sender_from_content
+        } else {
+            sender_username
+        };
         let (type_name, type_label) = type_label(row.local_type & 0xFFFF_FFFF);
         let direction = direction_for(is_group, username, &sender_username);
         if direction == "outgoing" && !self.config.include_outgoing {
@@ -883,7 +1160,11 @@ impl WeChatSource {
         }
         let message_id = format!("{rel_key}:{table_name}:{}", row.local_id);
         let event_id = format!("{:x}", Sha256::digest(message_id.as_bytes()));
-        let occurred_at = Utc.timestamp_opt(row.create_time, 0).single().unwrap_or_else(Utc::now).to_rfc3339();
+        let occurred_at = Utc
+            .timestamp_opt(row.create_time, 0)
+            .single()
+            .unwrap_or_else(Utc::now)
+            .to_rfc3339();
         let mut payload = json!({
             "messageId": message_id,
             "dbPath": rel_key,
@@ -910,7 +1191,10 @@ impl WeChatSource {
             payload,
             occurred_at,
             cursor_key: cursor_key(rel_key, table_name),
-            cursor: Cursor { create_time: row.create_time, local_id: row.local_id },
+            cursor: Cursor {
+                create_time: row.create_time,
+                local_id: row.local_id,
+            },
         })
     }
 
@@ -924,7 +1208,11 @@ impl WeChatSource {
             .find(|username| format!("{:x}", md5::compute(username.as_bytes())) == target)
     }
 
-    fn username_for_message_row(&self, row: &MessageRow, names: &BTreeMap<String, String>) -> Option<String> {
+    fn username_for_message_row(
+        &self,
+        row: &MessageRow,
+        names: &BTreeMap<String, String>,
+    ) -> Option<String> {
         let content = decompress_content(row.message_content.clone(), row.ct).unwrap_or_default();
         let (sender, _) = parse_message_content(&content, true);
         if !sender.is_empty() && names.contains_key(&sender) {
@@ -996,19 +1284,14 @@ fn run(args: Vec<String>) -> Result<(), String> {
         }
         "setup" => {
             let cfg = load_config_from_args(&parsed)?;
-            let result = setup_collector(&cfg, parsed.flag("force"), !parsed.flag("no-extract-keys"))?;
+            let result =
+                setup_collector(&cfg, parsed.flag("force"), !parsed.flag("no-extract-keys"))?;
             print_json(&result)
         }
         "probe" => {
             let cfg = load_config_from_args(&parsed)?;
             let source = WeChatSource::new(cfg)?;
             print_json(&source.probe())
-        }
-        "register" => {
-            let cfg = load_config_from_args(&parsed)?;
-            let response = BridgeClient::new(cfg).register_service(None);
-            println!("{}", response.body);
-            if response.ok { Ok(()) } else { Err(format!("register failed: HTTP {}", response.status)) }
         }
         "install-autostart" => {
             let cfg = load_config_from_args(&parsed)?;
@@ -1022,7 +1305,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
             let cfg = load_config_from_args(&parsed)?;
             let result = collector_status(&cfg);
             print_json(&result)?;
-            if result.get("status").and_then(Value::as_str) == Some("running") { Ok(()) } else { Err("collector is stopped".to_string()) }
+            if result.get("status").and_then(Value::as_str) == Some("running") {
+                Ok(())
+            } else {
+                Err("collector is stopped".to_string())
+            }
         }
         "run" => run_loop(load_config_from_args(&parsed)?, &parsed),
         other => Err(format!("unknown command: {other}")),
@@ -1038,13 +1325,18 @@ struct ParsedArgs {
 
 impl ParsedArgs {
     fn parse(args: Vec<String>) -> Self {
-        let mut parsed = Self { command: "help".to_string(), ..Default::default() };
+        let mut parsed = Self {
+            command: "help".to_string(),
+            ..Default::default()
+        };
         let mut index = 0;
         while index < args.len() {
             let arg = &args[index];
             if let Some(name) = arg.strip_prefix("--") {
                 if index + 1 < args.len() && !args[index + 1].starts_with("--") {
-                    parsed.values.insert(name.to_string(), args[index + 1].clone());
+                    parsed
+                        .values
+                        .insert(name.to_string(), args[index + 1].clone());
                     index += 2;
                 } else {
                     parsed.flags.insert(name.to_string());
@@ -1059,15 +1351,22 @@ impl ParsedArgs {
         }
         parsed
     }
-    fn value(&self, name: &str) -> Option<&str> { self.values.get(name).map(String::as_str) }
-    fn flag(&self, name: &str) -> bool { self.flags.contains(name) }
+    fn value(&self, name: &str) -> Option<&str> {
+        self.values.get(name).map(String::as_str)
+    }
+    fn flag(&self, name: &str) -> bool {
+        self.flags.contains(name)
+    }
 }
 
 fn load_config_from_args(parsed: &ParsedArgs) -> Result<CollectorConfig, String> {
     let implicit_config;
     let config_path = if parsed.value("config").is_none() {
         if let Some(state_dir) = parsed.value("state-dir") {
-            implicit_config = expand_home(state_dir).join("config.json").display().to_string();
+            implicit_config = expand_home(state_dir)
+                .join("config.json")
+                .display()
+                .to_string();
             Some(implicit_config.as_str())
         } else {
             None
@@ -1076,47 +1375,83 @@ fn load_config_from_args(parsed: &ParsedArgs) -> Result<CollectorConfig, String>
         parsed.value("config")
     };
     let mut cfg = CollectorConfig::load(config_path)?;
-    if let Some(value) = parsed.value("bridge-url") { cfg.bridge_base_url = value.to_string(); }
-    if let Some(value) = parsed.value("event-token") { cfg.bridge_event_token = Some(value.to_string()); }
-    if let Some(value) = parsed.value("service-registration-token") { cfg.service_registration_token = Some(value.to_string()); }
-    if let Some(value) = parsed.value("wechat-decrypt-dir") { cfg.wechat_decrypt_dir = Some(value.to_string()); }
-    if let Some(value) = parsed.value("wechat-decrypt-config") { cfg.wechat_decrypt_config = Some(value.to_string()); }
-    if let Some(value) = parsed.value("db-dir") { cfg.db_dir = Some(value.to_string()); }
-    if let Some(value) = parsed.value("keys-file") { cfg.keys_file = Some(value.to_string()); }
-    if let Some(value) = parsed.value("state-dir") { cfg.state_dir = value.to_string(); }
-    if let Some(value) = parsed.value("method-host") { cfg.method_host = value.to_string(); }
-    if let Some(value) = parsed.value("method-port") { cfg.method_port = value.parse().map_err(|_| "invalid method-port".to_string())?; }
-    if let Some(value) = parsed.value("poll-interval") { cfg.poll_interval_secs = value.parse().map_err(|_| "invalid poll-interval".to_string())?; }
-    if let Some(value) = parsed.value("batch-size") { cfg.batch_size = value.parse().map_err(|_| "invalid batch-size".to_string())?; }
+    if let Some(value) = parsed.value("bridge-url") {
+        cfg.bridge_base_url = value.to_string();
+    }
+    if let Some(value) = parsed.value("event-token") {
+        cfg.bridge_event_token = Some(value.to_string());
+    }
+    if let Some(value) = parsed.value("wechat-decrypt-dir") {
+        cfg.wechat_decrypt_dir = Some(value.to_string());
+    }
+    if let Some(value) = parsed.value("wechat-decrypt-config") {
+        cfg.wechat_decrypt_config = Some(value.to_string());
+    }
+    if let Some(value) = parsed.value("db-dir") {
+        cfg.db_dir = Some(value.to_string());
+    }
+    if let Some(value) = parsed.value("keys-file") {
+        cfg.keys_file = Some(value.to_string());
+    }
+    if let Some(value) = parsed.value("state-dir") {
+        cfg.state_dir = value.to_string();
+    }
+    if let Some(value) = parsed.value("method-host") {
+        cfg.method_host = value.to_string();
+    }
+    if let Some(value) = parsed.value("method-port") {
+        cfg.method_port = value
+            .parse()
+            .map_err(|_| "invalid method-port".to_string())?;
+    }
+    if let Some(value) = parsed.value("poll-interval") {
+        cfg.poll_interval_secs = value
+            .parse()
+            .map_err(|_| "invalid poll-interval".to_string())?;
+    }
+    if let Some(value) = parsed.value("batch-size") {
+        cfg.batch_size = value
+            .parse()
+            .map_err(|_| "invalid batch-size".to_string())?;
+    }
     Ok(cfg)
 }
 
 fn run_loop(mut cfg: CollectorConfig, parsed: &ParsedArgs) -> Result<(), String> {
-    if parsed.flag("no-text") { cfg.include_text = false; }
-    if parsed.flag("incoming-only") { cfg.include_outgoing = false; }
+    if parsed.flag("no-text") {
+        cfg.include_text = false;
+    }
+    if parsed.flag("incoming-only") {
+        cfg.include_outgoing = false;
+    }
     let source = Arc::new(WeChatSource::new(cfg.clone())?);
     let server = QueryMethodServer::start(cfg.clone(), source.clone())?;
     let bridge = BridgeClient::new(cfg.clone());
     let mut state = CollectorState::load(&cfg.state_path());
     let first_start = !cfg.state_path().exists();
 
-    if parsed.flag("register") {
-        let response = bridge.register_service(Some(server.base_url.clone()));
-        if !response.ok {
-            return Err(format!("register failed: HTTP {} {}", response.status, response.body));
-        }
-        println!("registered bridge-agent service methods and events");
-    }
     if first_start || parsed.flag("reset-state") {
         state = CollectorState::default();
-        let backfill = parsed.value("backfill-seconds").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+        let backfill = parsed
+            .value("backfill-seconds")
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
         source.bootstrap_state(&mut state, backfill);
         state.save(&cfg.state_path())?;
         if backfill <= 0 {
-            println!("initialized state without historical broadcast: {}", cfg.state_path().display());
+            println!(
+                "initialized state without historical broadcast: {}",
+                cfg.state_path().display()
+            );
         }
     }
-    println!("collector running service={}.{} bridge={} methods={} state={}", cfg.service_name, cfg.event_name, cfg.bridge_events_url(), server.base_url, cfg.state_path().display());
+    println!(
+        "collector running localApp=com.baijimu.connector.wechat.{} bridge={} methods={} state={}",
+        cfg.event_name,
+        cfg.bridge_events_url(),
+        server.base_url,
+        cfg.state_path().display()
+    );
 
     loop {
         let (current_sessions, changed) = source.changed_usernames(&state);
@@ -1124,12 +1459,22 @@ fn run_loop(mut cfg: CollectorConfig, parsed: &ParsedArgs) -> Result<(), String>
         let mut failed = false;
         for candidate in source.iter_new_messages(&state, &changed, cfg.batch_size) {
             let ok = if parsed.flag("dry-run") {
-                println!("{}", serde_json::to_string(&candidate.payload).map_err(|e| e.to_string())?);
+                println!(
+                    "{}",
+                    serde_json::to_string(&candidate.payload).map_err(|e| e.to_string())?
+                );
                 true
             } else {
-                let response = bridge.emit_message(&candidate.payload, &candidate.event_id, Some(&candidate.occurred_at));
+                let response = bridge.emit_message(
+                    &candidate.payload,
+                    &candidate.event_id,
+                    Some(&candidate.occurred_at),
+                );
                 if !response.ok {
-                    eprintln!("emit failed: HTTP {} {}; state cursor was not advanced", response.status, response.body);
+                    eprintln!(
+                        "emit failed: HTTP {} {}; state cursor was not advanced",
+                        response.status, response.body
+                    );
                     false
                 } else {
                     true
@@ -1139,7 +1484,11 @@ fn run_loop(mut cfg: CollectorConfig, parsed: &ParsedArgs) -> Result<(), String>
                 failed = true;
                 break;
             }
-            state.set_cursor(candidate.cursor_key, candidate.cursor.create_time, candidate.cursor.local_id);
+            state.set_cursor(
+                candidate.cursor_key,
+                candidate.cursor.create_time,
+                candidate.cursor.local_id,
+            );
             emitted += 1;
         }
         if !failed {
@@ -1148,9 +1497,15 @@ fn run_loop(mut cfg: CollectorConfig, parsed: &ParsedArgs) -> Result<(), String>
         state.save(&cfg.state_path())?;
         if parsed.flag("once") {
             println!("emitted={emitted} changed_sessions={}", changed.len());
-            return if failed { Err("emit failed".to_string()) } else { Ok(()) };
+            return if failed {
+                Err("emit failed".to_string())
+            } else {
+                Ok(())
+            };
         }
-        thread::sleep(Duration::from_millis((cfg.poll_interval_secs * 1000.0) as u64));
+        thread::sleep(Duration::from_millis(
+            (cfg.poll_interval_secs * 1000.0) as u64,
+        ));
     }
 }
 
@@ -1182,7 +1537,12 @@ impl QueryMethodServer {
 }
 
 fn handle_http_request(mut request: Request, source: Arc<WeChatSource>) {
-    let path = request.url().split('?').next().unwrap_or(request.url()).to_string();
+    let path = request
+        .url()
+        .split('?')
+        .next()
+        .unwrap_or(request.url())
+        .to_string();
     if request.method() == &Method::Get && path == "/health" {
         respond_json(request, 200, json!({"ok": true}));
         return;
@@ -1201,43 +1561,86 @@ fn handle_http_request(mut request: Request, source: Arc<WeChatSource>) {
         }
     };
     match dispatch_method(&source, &method, &payload) {
-        Ok(data) => respond_json(request, 200, json!({"success": true, "data": data, "error": null})),
+        Ok(data) => respond_json(
+            request,
+            200,
+            json!({"success": true, "data": data, "error": null}),
+        ),
         Err(error) => respond_json(request, 400, error_response("BAD_REQUEST", &error)),
     }
 }
 
 fn dispatch_method(source: &WeChatSource, method: &str, payload: &Value) -> Result<Value, String> {
-    let obj = payload.as_object().ok_or_else(|| "请求体必须是 JSON object".to_string())?;
+    let obj = payload
+        .as_object()
+        .ok_or_else(|| "请求体必须是 JSON object".to_string())?;
     match method {
         "getRecentSessions" => {
             let limit = value_usize(obj.get("limit"), 20);
-            Ok(json!({"sessions": source.recent_sessions(limit), "limit": normalize_limit(limit, 200)}))
+            Ok(
+                json!({"sessions": source.recent_sessions(limit), "limit": normalize_limit(limit, 200)}),
+            )
         }
         "getContacts" => {
             let limit = value_usize(obj.get("limit"), 50);
             let query = obj.get("query").and_then(Value::as_str).unwrap_or("");
-            Ok(json!({"contacts": source.contacts(query, limit), "limit": normalize_limit(limit, 500)}))
+            Ok(
+                json!({"contacts": source.contacts(query, limit), "limit": normalize_limit(limit, 500)}),
+            )
         }
         "getChatHistory" => source.get_chat_history(
             require_string(obj, "conversationId")?,
             value_usize(obj.get("limit"), 50),
             value_usize(obj.get("offset"), 0),
-            obj.get("startTime").or_else(|| obj.get("start_time")).unwrap_or(&Value::String(String::new())),
-            obj.get("endTime").or_else(|| obj.get("end_time")).unwrap_or(&Value::String(String::new())),
-            obj.get("oldestFirst").or_else(|| obj.get("oldest_first")).and_then(Value::as_bool).unwrap_or(false),
+            obj.get("startTime")
+                .or_else(|| obj.get("start_time"))
+                .unwrap_or(&Value::String(String::new())),
+            obj.get("endTime")
+                .or_else(|| obj.get("end_time"))
+                .unwrap_or(&Value::String(String::new())),
+            obj.get("oldestFirst")
+                .or_else(|| obj.get("oldest_first"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             obj.get("messageTypes").or_else(|| obj.get("message_types")),
         ),
         "searchMessages" => source.search_messages(
             require_string(obj, "keyword")?,
-            obj.get("conversationId").and_then(Value::as_str).unwrap_or(""),
+            obj.get("conversationId")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
             value_usize(obj.get("limit"), 20),
             value_usize(obj.get("offset"), 0),
-            obj.get("startTime").or_else(|| obj.get("start_time")).unwrap_or(&Value::String(String::new())),
-            obj.get("endTime").or_else(|| obj.get("end_time")).unwrap_or(&Value::String(String::new())),
+            obj.get("startTime")
+                .or_else(|| obj.get("start_time"))
+                .unwrap_or(&Value::String(String::new())),
+            obj.get("endTime")
+                .or_else(|| obj.get("end_time"))
+                .unwrap_or(&Value::String(String::new())),
         ),
-        "getMessageById" => Ok(json!({"message": source.get_message_by_id(require_string(obj, "messageId")?)?})),
-        "getChatImages" => source.get_chat_history(require_string(obj, "conversationId")?, value_usize(obj.get("limit"), 20), value_usize(obj.get("offset"), 0), obj.get("startTime").unwrap_or(&Value::String(String::new())), obj.get("endTime").unwrap_or(&Value::String(String::new())), false, Some(&json!(["image"]))),
-        "getVoiceMessages" => source.get_chat_history(require_string(obj, "conversationId")?, value_usize(obj.get("limit"), 20), value_usize(obj.get("offset"), 0), obj.get("startTime").unwrap_or(&Value::String(String::new())), obj.get("endTime").unwrap_or(&Value::String(String::new())), false, Some(&json!(["voice"]))),
+        "getMessageById" => {
+            Ok(json!({"message": source.get_message_by_id(require_string(obj, "messageId")?)?}))
+        }
+        "getChatImages" => source.get_chat_history(
+            require_string(obj, "conversationId")?,
+            value_usize(obj.get("limit"), 20),
+            value_usize(obj.get("offset"), 0),
+            obj.get("startTime")
+                .unwrap_or(&Value::String(String::new())),
+            obj.get("endTime").unwrap_or(&Value::String(String::new())),
+            false,
+            Some(&json!(["image"])),
+        ),
+        "getVoiceMessages" => source.get_chat_history(
+            require_string(obj, "conversationId")?,
+            value_usize(obj.get("limit"), 20),
+            value_usize(obj.get("offset"), 0),
+            obj.get("startTime")
+                .unwrap_or(&Value::String(String::new())),
+            obj.get("endTime").unwrap_or(&Value::String(String::new())),
+            false,
+            Some(&json!(["voice"])),
+        ),
         _ => Err(format!("unknown method: {method}")),
     }
 }
@@ -1257,7 +1660,13 @@ struct BridgeResponse {
 
 impl BridgeClient {
     fn new(config: CollectorConfig) -> Self {
-        Self { config, client: Client::builder().timeout(Duration::from_secs(15)).build().unwrap_or_else(|_| Client::new()) }
+        Self {
+            config,
+            client: Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .unwrap_or_else(|_| Client::new()),
+        }
     }
 
     fn post_json(&self, url: &str, data: &Value, token: Option<&str>) -> BridgeResponse {
@@ -1269,20 +1678,28 @@ impl BridgeClient {
             Ok(response) => {
                 let status = response.status().as_u16();
                 let body = response.text().unwrap_or_default();
-                BridgeResponse { ok: (200..300).contains(&status), status, body }
+                BridgeResponse {
+                    ok: (200..300).contains(&status),
+                    status,
+                    body,
+                }
             }
-            Err(error) => BridgeResponse { ok: false, status: 0, body: error.to_string() },
+            Err(error) => BridgeResponse {
+                ok: false,
+                status: 0,
+                body: error.to_string(),
+            },
         }
     }
 
-    fn register_service(&self, method_base_url: Option<String>) -> BridgeResponse {
-        let registration = service_registration(&self.config, method_base_url.as_deref());
-        self.post_json(&self.config.bridge_services_url(), &registration, self.config.service_registration_token.as_deref())
-    }
-
-    fn emit_message(&self, payload: &Value, event_id: &str, occurred_at: Option<&str>) -> BridgeResponse {
+    fn emit_message(
+        &self,
+        payload: &Value,
+        event_id: &str,
+        occurred_at: Option<&str>,
+    ) -> BridgeResponse {
         let mut request = json!({
-            "service": self.config.service_name,
+            "connectorId": self.config.connector_id,
             "event": self.config.event_name,
             "eventId": event_id,
             "payload": payload,
@@ -1290,25 +1707,19 @@ impl BridgeClient {
         if let Some(value) = occurred_at {
             request["occurredAt"] = Value::String(value.to_string());
         }
-        self.post_json(&self.config.bridge_events_url(), &request, self.config.bridge_event_token.as_deref())
+        self.post_json(
+            &self.config.bridge_events_url(),
+            &request,
+            self.config.bridge_event_token.as_deref(),
+        )
     }
 }
 
-fn service_registration(config: &CollectorConfig, method_base_url: Option<&str>) -> Value {
-    json!({
-        "name": config.service_name,
-        "description": "Local WeChat message collector.",
-        "transport": {"type": "http", "baseUrl": method_base_url.unwrap_or(&config.method_base_url())},
-        "healthCheck": {"type": "http", "path": "/health", "timeoutSecs": 2, "expectStatus": 200},
-        "methods": method_declarations(),
-        "events": [{"name": config.event_name, "description": "Emitted when a local WeChat message is observed.", "enabled": true, "payload_schema": message_event_payload_schema()}],
-        "startCommand": start_command_value(),
-        "replace": true,
-        "managed_by": "wechat-bridge-collector",
-    })
-}
-
-fn setup_collector(cfg: &CollectorConfig, force: bool, extract_keys: bool) -> Result<Value, String> {
+fn setup_collector(
+    cfg: &CollectorConfig,
+    force: bool,
+    extract_keys: bool,
+) -> Result<Value, String> {
     fs::create_dir_all(cfg.state_dir_path()).map_err(|e| e.to_string())?;
     let mut cfg = cfg.clone();
     if cfg.db_dir.is_none() {
@@ -1324,13 +1735,19 @@ fn setup_collector(cfg: &CollectorConfig, force: bool, extract_keys: bool) -> Re
     cfg.save(None)?;
     let keys_path = expand_home(cfg.keys_file.as_deref().unwrap_or(""));
     if keys_path.exists() && !force {
-        return Ok(json!({"status": "ready", "config_path": cfg.config_path(), "keys_file": keys_path, "db_dir": cfg.db_dir}));
+        return Ok(
+            json!({"status": "ready", "config_path": cfg.config_path(), "keys_file": keys_path, "db_dir": cfg.db_dir}),
+        );
     }
     if !extract_keys {
-        return Ok(json!({"status": "config_written", "config_path": cfg.config_path(), "keys_file": keys_path, "db_dir": cfg.db_dir}));
+        return Ok(
+            json!({"status": "config_written", "config_path": cfg.config_path(), "keys_file": keys_path, "db_dir": cfg.db_dir}),
+        );
     }
     extract_wechat_keys(&cfg, &keys_path)?;
-    Ok(json!({"status": "keys_extracted", "config_path": cfg.config_path(), "keys_file": keys_path, "db_dir": cfg.db_dir}))
+    Ok(
+        json!({"status": "keys_extracted", "config_path": cfg.config_path(), "keys_file": keys_path, "db_dir": cfg.db_dir}),
+    )
 }
 
 fn extract_wechat_keys(cfg: &CollectorConfig, output_path: &Path) -> Result<(), String> {
@@ -1338,14 +1755,38 @@ fn extract_wechat_keys(cfg: &CollectorConfig, output_path: &Path) -> Result<(), 
         let wd_dir = cfg.resolved_wechat_decrypt_dir()?;
         let source = wd_dir.join("find_all_keys_macos.c");
         if !source.is_file() {
-            return Err(format!("wechat-decrypt macOS scanner source not found: {}", source.display()));
+            return Err(format!(
+                "wechat-decrypt macOS scanner source not found: {}",
+                source.display()
+            ));
         }
-        fs::create_dir_all(output_path.parent().unwrap_or_else(|| Path::new("."))).map_err(|e| e.to_string())?;
-        let binary = output_path.parent().unwrap_or_else(|| Path::new(".")).join("find_all_keys_macos");
-        run_checked(Command::new("cc").args(["-O2", "-o"]).arg(&binary).arg(&source).args(["-framework", "Foundation"]), 60)?;
-        let _ = Command::new("codesign").args(["-s", "-"]).arg(&binary).output();
-        run_checked(Command::new(&binary).current_dir(output_path.parent().unwrap_or_else(|| Path::new("."))), 180)?;
-        let generated = output_path.parent().unwrap_or_else(|| Path::new(".")).join("all_keys.json");
+        fs::create_dir_all(output_path.parent().unwrap_or_else(|| Path::new(".")))
+            .map_err(|e| e.to_string())?;
+        let binary = output_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("find_all_keys_macos");
+        run_checked(
+            Command::new("cc")
+                .args(["-O2", "-o"])
+                .arg(&binary)
+                .arg(&source)
+                .args(["-framework", "Foundation"]),
+            60,
+        )?;
+        let _ = Command::new("codesign")
+            .args(["-s", "-"])
+            .arg(&binary)
+            .output();
+        run_checked(
+            Command::new(&binary)
+                .current_dir(output_path.parent().unwrap_or_else(|| Path::new("."))),
+            180,
+        )?;
+        let generated = output_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("all_keys.json");
         if !generated.is_file() {
             return Err("wechat-decrypt macOS scanner did not generate all_keys.json".to_string());
         }
@@ -1357,42 +1798,104 @@ fn extract_wechat_keys(cfg: &CollectorConfig, output_path: &Path) -> Result<(), 
     let wd_dir = cfg.resolved_wechat_decrypt_dir()?;
     let script = wd_dir.join("find_all_keys.py");
     if !script.is_file() {
-        return Err(format!("wechat-decrypt key extraction script not found: {}", script.display()));
+        return Err(format!(
+            "wechat-decrypt key extraction script not found: {}",
+            script.display()
+        ));
     }
-    fs::create_dir_all(output_path.parent().unwrap_or_else(|| Path::new("."))).map_err(|e| e.to_string())?;
+    fs::create_dir_all(output_path.parent().unwrap_or_else(|| Path::new(".")))
+        .map_err(|e| e.to_string())?;
     let python = env::var("PYTHON").unwrap_or_else(|_| "python3".to_string());
-    run_checked(Command::new(python).arg(script).current_dir(output_path.parent().unwrap_or_else(|| Path::new("."))).env("WECHAT_DECRYPT_APP_DIR", wd_dir), 180)
+    run_checked(
+        Command::new(python)
+            .arg(script)
+            .current_dir(output_path.parent().unwrap_or_else(|| Path::new(".")))
+            .env("WECHAT_DECRYPT_APP_DIR", wd_dir),
+        180,
+    )
 }
 
 fn install_autostart(cfg: &CollectorConfig) -> Result<Value, String> {
     if env::consts::OS == "macos" {
-        let plist = home_dir().join("Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist");
+        let plist =
+            home_dir().join("Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist");
         fs::create_dir_all(plist.parent().unwrap()).map_err(|e| e.to_string())?;
         let exe = env::current_exe().map_err(|e| e.to_string())?;
         let stdout = cfg.state_dir_path().join("collector.log");
         let stderr = cfg.state_dir_path().join("collector.err.log");
         fs::create_dir_all(cfg.state_dir_path()).map_err(|e| e.to_string())?;
-        fs::write(&plist, render_macos_plist(&exe, &cfg.config_path(), &cfg.state_dir_path(), &stdout, &stderr)).map_err(|e| e.to_string())?;
-        let _ = Command::new("launchctl").args(["bootout", &format!("gui/{}", unsafe { libc_getuid() })]).arg(&plist).output();
-        run_checked(Command::new("launchctl").args(["bootstrap", &format!("gui/{}", unsafe { libc_getuid() })]).arg(&plist), 15)?;
-        let _ = Command::new("launchctl").args(["kickstart", "-k", &format!("gui/{}/com.baijimu.wechat-bridge-collector", unsafe { libc_getuid() })]).output();
-        Ok(json!({"status": "installed", "platform": "darwin", "launcher_path": plist, "autostart_path": plist, "health_url": format!("{}/health", cfg.method_base_url())}))
+        fs::write(
+            &plist,
+            render_macos_plist(
+                &exe,
+                &cfg.config_path(),
+                &cfg.state_dir_path(),
+                &stdout,
+                &stderr,
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+        let _ = Command::new("launchctl")
+            .args(["bootout", &format!("gui/{}", unsafe { libc_getuid() })])
+            .arg(&plist)
+            .output();
+        run_checked(
+            Command::new("launchctl")
+                .args(["bootstrap", &format!("gui/{}", unsafe { libc_getuid() })])
+                .arg(&plist),
+            15,
+        )?;
+        let _ = Command::new("launchctl")
+            .args([
+                "kickstart",
+                "-k",
+                &format!("gui/{}/com.baijimu.wechat-bridge-collector", unsafe {
+                    libc_getuid()
+                }),
+            ])
+            .output();
+        Ok(
+            json!({"status": "installed", "platform": "darwin", "launcher_path": plist, "autostart_path": plist, "health_url": format!("{}/health", cfg.method_base_url())}),
+        )
     } else {
-        Err(format!("install-autostart is not supported on {}", env::consts::OS))
+        Err(format!(
+            "install-autostart is not supported on {}",
+            env::consts::OS
+        ))
     }
 }
 
 fn start_collector(cfg: &CollectorConfig) -> Result<Value, String> {
     if env::consts::OS == "macos" {
-        let plist = home_dir().join("Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist");
+        let plist =
+            home_dir().join("Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist");
         if plist.exists() {
-            run_checked(Command::new("launchctl").args(["kickstart", "-k", &format!("gui/{}/com.baijimu.wechat-bridge-collector", unsafe { libc_getuid() })]), 15)?;
-            return Ok(json!({"status": "started", "platform": "darwin", "launcher_path": plist, "health_url": format!("{}/health", cfg.method_base_url())}));
+            run_checked(
+                Command::new("launchctl").args([
+                    "kickstart",
+                    "-k",
+                    &format!("gui/{}/com.baijimu.wechat-bridge-collector", unsafe {
+                        libc_getuid()
+                    }),
+                ]),
+                15,
+            )?;
+            return Ok(
+                json!({"status": "started", "platform": "darwin", "launcher_path": plist, "health_url": format!("{}/health", cfg.method_base_url())}),
+            );
         }
     }
     fs::create_dir_all(cfg.state_dir_path()).map_err(|e| e.to_string())?;
-    let stdout = OpenOptions::new().create(true).append(true).open(cfg.state_dir_path().join("collector.log")).map_err(|e| e.to_string())?;
-    let stderr = OpenOptions::new().create(true).append(true).open(cfg.state_dir_path().join("collector.err.log")).map_err(|e| e.to_string())?;
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(cfg.state_dir_path().join("collector.log"))
+        .map_err(|e| e.to_string())?;
+    let stderr = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(cfg.state_dir_path().join("collector.err.log"))
+        .map_err(|e| e.to_string())?;
     let exe = env::current_exe().map_err(|e| e.to_string())?;
     Command::new(exe)
         .arg("--config")
@@ -1402,7 +1905,9 @@ fn start_collector(cfg: &CollectorConfig) -> Result<Value, String> {
         .stderr(Stdio::from(stderr))
         .spawn()
         .map_err(|e| e.to_string())?;
-    Ok(json!({"status": "started", "platform": env::consts::OS, "health_url": format!("{}/health", cfg.method_base_url()), "message": "started without platform autostart"}))
+    Ok(
+        json!({"status": "started", "platform": env::consts::OS, "health_url": format!("{}/health", cfg.method_base_url()), "message": "started without platform autostart"}),
+    )
 }
 
 fn collector_status(cfg: &CollectorConfig) -> Value {
@@ -1416,7 +1921,11 @@ fn collector_status(cfg: &CollectorConfig) -> Value {
     json!({"status": if ok { "running" } else { "stopped" }, "platform": env::consts::OS, "health_url": url})
 }
 
-fn query_session_rows(conn: &Connection, sql: &str, limit: usize) -> rusqlite::Result<Vec<SessionRow>> {
+fn query_session_rows(
+    conn: &Connection,
+    sql: &str,
+    limit: usize,
+) -> rusqlite::Result<Vec<SessionRow>> {
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(params![limit as i64], |row| {
         Ok(SessionRow {
@@ -1432,7 +1941,15 @@ fn query_session_rows(conn: &Connection, sql: &str, limit: usize) -> rusqlite::R
     Ok(rows.flatten().collect())
 }
 
-fn query_table_rows(conn: &Connection, table_name: &str, start_ts: Option<i64>, end_ts: Option<i64>, type_filter: Option<&HashSet<i64>>, limit: usize, oldest_first: bool) -> Vec<MessageRow> {
+fn query_table_rows(
+    conn: &Connection,
+    table_name: &str,
+    start_ts: Option<i64>,
+    end_ts: Option<i64>,
+    type_filter: Option<&HashSet<i64>>,
+    limit: usize,
+    oldest_first: bool,
+) -> Vec<MessageRow> {
     let has_ct = has_column(conn, table_name, "WCDB_CT_message_content");
     let mut clauses = Vec::new();
     let mut params_values: Vec<Value> = Vec::new();
@@ -1445,20 +1962,33 @@ fn query_table_rows(conn: &Connection, table_name: &str, start_ts: Option<i64>, 
         params_values.push(Value::from(value));
     }
     if let Some(filter) = type_filter.filter(|v| !v.is_empty()) {
-        clauses.push(format!("(local_type & 4294967295) IN ({})", vec!["?"; filter.len()].join(",")));
+        clauses.push(format!(
+            "(local_type & 4294967295) IN ({})",
+            vec!["?"; filter.len()].join(",")
+        ));
         for value in filter {
             params_values.push(Value::from(*value));
         }
     }
-    let where_sql = if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
+    let where_sql = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", clauses.join(" AND "))
+    };
     let order = if oldest_first { "ASC" } else { "DESC" };
     let sql = format!("SELECT local_id, local_type, create_time, real_sender_id, message_content, {} FROM [{}] {} ORDER BY create_time {}, local_id {} LIMIT ?", if has_ct { "WCDB_CT_message_content" } else { "NULL" }, table_name, where_sql, order, order);
     params_values.push(Value::from(normalize_limit(limit, 1000) as i64));
-    let params_sql = params_values.iter().map(json_to_sql_value).collect::<Vec<_>>();
+    let params_sql = params_values
+        .iter()
+        .map(json_to_sql_value)
+        .collect::<Vec<_>>();
     let Ok(mut stmt) = conn.prepare(&sql) else {
         return Vec::new();
     };
-    let Ok(rows) = stmt.query_map(rusqlite::params_from_iter(params_sql.iter()), message_row_from_row) else {
+    let Ok(rows) = stmt.query_map(
+        rusqlite::params_from_iter(params_sql.iter()),
+        message_row_from_row,
+    ) else {
         return Vec::new();
     };
     rows.flatten().collect()
@@ -1497,7 +2027,9 @@ fn json_to_sql_value(value: &Value) -> rusqlite::types::Value {
 fn load_name2id_maps(conn: &Connection) -> HashMap<i64, String> {
     let mut map = HashMap::new();
     if let Ok(mut stmt) = conn.prepare("SELECT rowid, user_name FROM Name2Id") {
-        if let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))) {
+        if let Ok(rows) = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        }) {
             for (id, name) in rows.flatten() {
                 if !name.is_empty() {
                     map.insert(id, name);
@@ -1546,11 +2078,17 @@ fn full_decrypt(db_path: &Path, out_path: &Path, enc_key: &[u8]) -> Result<(), S
 }
 
 fn decrypt_wal(wal_path: &Path, out_path: &Path, enc_key: &[u8]) -> Result<(), String> {
-    if !wal_path.exists() || fs::metadata(wal_path).map_err(|e| e.to_string())?.len() as usize <= WAL_HEADER_SZ {
+    if !wal_path.exists()
+        || fs::metadata(wal_path).map_err(|e| e.to_string())?.len() as usize <= WAL_HEADER_SZ
+    {
         return Ok(());
     }
     let mut wal = File::open(wal_path).map_err(|e| e.to_string())?;
-    let mut db = OpenOptions::new().read(true).write(true).open(out_path).map_err(|e| e.to_string())?;
+    let mut db = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(out_path)
+        .map_err(|e| e.to_string())?;
     let mut header = [0_u8; WAL_HEADER_SZ];
     wal.read_exact(&mut header).map_err(|e| e.to_string())?;
     let wal_salt1 = u32::from_be_bytes(header[16..20].try_into().unwrap());
@@ -1568,18 +2106,26 @@ fn decrypt_wal(wal_path: &Path, out_path: &Path, enc_key: &[u8]) -> Result<(), S
         if pgno == 0 || pgno > 1_000_000 || frame_salt1 != wal_salt1 || frame_salt2 != wal_salt2 {
             continue;
         }
-        db.seek(SeekFrom::Start((pgno as u64 - 1) * PAGE_SZ as u64)).map_err(|e| e.to_string())?;
-        db.write_all(&decrypt_page(enc_key, &encrypted, pgno)?).map_err(|e| e.to_string())?;
+        db.seek(SeekFrom::Start((pgno as u64 - 1) * PAGE_SZ as u64))
+            .map_err(|e| e.to_string())?;
+        db.write_all(&decrypt_page(enc_key, &encrypted, pgno)?)
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 fn decrypt_page(enc_key: &[u8], page: &[u8], pgno: u32) -> Result<Vec<u8>, String> {
     let iv = &page[PAGE_SZ - RESERVE_SZ..PAGE_SZ - RESERVE_SZ + IV_SZ];
-    let encrypted = if pgno == 1 { &page[SALT_SZ..PAGE_SZ - RESERVE_SZ] } else { &page[..PAGE_SZ - RESERVE_SZ] };
+    let encrypted = if pgno == 1 {
+        &page[SALT_SZ..PAGE_SZ - RESERVE_SZ]
+    } else {
+        &page[..PAGE_SZ - RESERVE_SZ]
+    };
     let mut buf = encrypted.to_vec();
     let cipher = Aes256CbcDec::new_from_slices(enc_key, iv).map_err(|e| e.to_string())?;
-    let decrypted = cipher.decrypt_padded_mut::<NoPadding>(&mut buf).map_err(|e| e.to_string())?;
+    let decrypted = cipher
+        .decrypt_padded_mut::<NoPadding>(&mut buf)
+        .map_err(|e| e.to_string())?;
     let mut output = Vec::with_capacity(PAGE_SZ);
     if pgno == 1 {
         output.extend_from_slice(SQLITE_HDR);
@@ -1591,7 +2137,9 @@ fn decrypt_page(enc_key: &[u8], page: &[u8], pgno: u32) -> Result<Vec<u8>, Strin
 
 fn assert_sqlite_healthy(path: &Path) -> Result<(), String> {
     let conn = Connection::open(path).map_err(|e| e.to_string())?;
-    let result: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0)).map_err(|e| e.to_string())?;
+    let result: String = conn
+        .query_row("PRAGMA quick_check", [], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
     if result == "ok" {
         Ok(())
     } else {
@@ -1659,12 +2207,25 @@ fn parse_time_value(value: &Value, is_end: bool) -> Result<Option<i64>, String> 
     }
     let normalized = text.replace('T', " ");
     if let Ok(dt) = NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M")) {
-        return Ok(Local.from_local_datetime(&dt).single().map(|d| d.timestamp()));
+        .or_else(|_| NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M"))
+    {
+        return Ok(Local
+            .from_local_datetime(&dt)
+            .single()
+            .map(|d| d.timestamp()));
     }
     if let Ok(date) = NaiveDate::parse_from_str(&normalized, "%Y-%m-%d") {
-        let dt = date.and_hms_opt(if is_end { 23 } else { 0 }, if is_end { 59 } else { 0 }, if is_end { 59 } else { 0 }).unwrap();
-        return Ok(Local.from_local_datetime(&dt).single().map(|d| d.timestamp()));
+        let dt = date
+            .and_hms_opt(
+                if is_end { 23 } else { 0 },
+                if is_end { 59 } else { 0 },
+                if is_end { 59 } else { 0 },
+            )
+            .unwrap();
+        return Ok(Local
+            .from_local_datetime(&dt)
+            .single()
+            .map(|d| d.timestamp()));
     }
     DateTime::parse_from_rfc3339(text)
         .map(|dt| Some(dt.timestamp()))
@@ -1687,17 +2248,39 @@ fn resolve_type_filter(value: Option<&Value>) -> Result<Option<HashSet<i64>>, St
             continue;
         }
         match key.as_str() {
-            "text" => { codes.insert(1); }
-            "image" => { codes.insert(3); }
-            "voice" => { codes.insert(34); }
-            "video" => { codes.insert(43); }
-            "sticker" | "emoji" => { codes.insert(47); }
-            "location" => { codes.insert(48); }
-            "app" | "file" => { codes.insert(49); }
-            "contact_card" | "namecard" => { codes.insert(42); }
-            "call" => { codes.insert(50); }
-            "system" => { codes.insert(10000); }
-            "recall" => { codes.insert(10002); }
+            "text" => {
+                codes.insert(1);
+            }
+            "image" => {
+                codes.insert(3);
+            }
+            "voice" => {
+                codes.insert(34);
+            }
+            "video" => {
+                codes.insert(43);
+            }
+            "sticker" | "emoji" => {
+                codes.insert(47);
+            }
+            "location" => {
+                codes.insert(48);
+            }
+            "app" | "file" => {
+                codes.insert(49);
+            }
+            "contact_card" | "namecard" => {
+                codes.insert(42);
+            }
+            "call" => {
+                codes.insert(50);
+            }
+            "system" => {
+                codes.insert(10000);
+            }
+            "recall" => {
+                codes.insert(10002);
+            }
             _ => unknown.push(key),
         }
     }
@@ -1712,7 +2295,9 @@ fn parse_message_id(message_id: &str) -> Result<(String, String, i64), String> {
     if parts.len() != 3 {
         return Err("messageId 格式不正确".to_string());
     }
-    let local_id = parts[0].parse::<i64>().map_err(|_| "messageId localId 不正确".to_string())?;
+    let local_id = parts[0]
+        .parse::<i64>()
+        .map_err(|_| "messageId localId 不正确".to_string())?;
     let table_name = parts[1].to_string();
     let rel_key = parts[2].to_string();
     if rel_key.is_empty() || !is_msg_table(&table_name) {
@@ -1722,12 +2307,18 @@ fn parse_message_id(message_id: &str) -> Result<(String, String, i64), String> {
 }
 
 fn is_msg_table(name: &str) -> bool {
-    name.len() == 36 && name.starts_with("Msg_") && name[4..].chars().all(|c| c.is_ascii_hexdigit() && c.is_ascii_lowercase() || c.is_ascii_digit())
+    name.len() == 36
+        && name.starts_with("Msg_")
+        && name[4..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && c.is_ascii_lowercase() || c.is_ascii_digit())
 }
 
 fn decompress_content(content: ValueBytes, ct: Option<i64>) -> Option<String> {
     match content {
-        ValueBytes::Bytes(bytes) if ct == Some(4) => zstd::decode_all(&bytes[..]).ok().and_then(|decoded| String::from_utf8(decoded).ok()),
+        ValueBytes::Bytes(bytes) if ct == Some(4) => zstd::decode_all(&bytes[..])
+            .ok()
+            .and_then(|decoded| String::from_utf8(decoded).ok()),
         ValueBytes::Bytes(bytes) => Some(String::from_utf8_lossy(&bytes).to_string()),
         ValueBytes::Text(text) => Some(text),
         ValueBytes::Null => Some(String::new()),
@@ -1747,10 +2338,23 @@ fn format_text_for_type(type_name: &str, text: &str, local_id: i64) -> String {
     match type_name {
         "image" if text.is_empty() => format!("[图片] local_id={local_id}"),
         "sticker" => "[表情]".to_string(),
-        "voice" => if text.is_empty() { "[语音]".to_string() } else { text.to_string() },
-        "video" => if text.is_empty() { "[视频]".to_string() } else { text.to_string() },
+        "voice" => {
+            if text.is_empty() {
+                "[语音]".to_string()
+            } else {
+                text.to_string()
+            }
+        }
+        "video" => {
+            if text.is_empty() {
+                "[视频]".to_string()
+            } else {
+                text.to_string()
+            }
+        }
         "app" => summarize_app_xml(text).unwrap_or_else(|| "[链接/文件]".to_string()),
-        _ if text.trim_start().starts_with('<') => summarize_app_xml(text).unwrap_or_else(|| summarize_xml_text(text).unwrap_or_else(|| "[XML消息]".to_string())),
+        _ if text.trim_start().starts_with('<') => summarize_app_xml(text)
+            .unwrap_or_else(|| summarize_xml_text(text).unwrap_or_else(|| "[XML消息]".to_string())),
         _ => text.to_string(),
     }
 }
@@ -1760,7 +2364,11 @@ fn summarize_app_xml(text: &str) -> Option<String> {
     let desc = extract_tag_text(text, "des").or_else(|| extract_tag_text(text, "digest"));
     let app_type = extract_tag_text(text, "type");
     if app_type.as_deref() == Some("6") {
-        return Some(title.map(|v| format!("[文件] {v}")).unwrap_or_else(|| "[文件]".to_string()));
+        return Some(
+            title
+                .map(|v| format!("[文件] {v}"))
+                .unwrap_or_else(|| "[文件]".to_string()),
+        );
     }
     match (title, desc) {
         (Some(t), Some(d)) if t != d => Some(format!("{t}\n{d}")),
@@ -1779,18 +2387,32 @@ fn summarize_xml_text(text: &str) -> Option<String> {
 }
 
 fn extract_tag_text(text: &str, tag: &str) -> Option<String> {
-    if text.len() > 200_000 || text.to_ascii_uppercase().contains("<!DOCTYPE") || text.to_ascii_uppercase().contains("<!ENTITY") {
+    if text.len() > 200_000
+        || text.to_ascii_uppercase().contains("<!DOCTYPE")
+        || text.to_ascii_uppercase().contains("<!ENTITY")
+    {
         return None;
     }
     let start_tag = format!("<{tag}>");
     let end_tag = format!("</{tag}>");
     let start = text.find(&start_tag)? + start_tag.len();
     let end = text[start..].find(&end_tag)? + start;
-    let value = text[start..end].split_whitespace().collect::<Vec<_>>().join(" ");
-    if value.is_empty() { None } else { Some(value) }
+    let value = text[start..end]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
-fn direction_for(is_group: bool, conversation_username: &str, sender_username: &str) -> &'static str {
+fn direction_for(
+    is_group: bool,
+    conversation_username: &str,
+    sender_username: &str,
+) -> &'static str {
     if is_group || sender_username.is_empty() {
         "unknown"
     } else if sender_username == conversation_username {
@@ -1825,23 +2447,40 @@ fn file_sig2(path: &Path) -> Option<FileSig2> {
 fn file_sig4(db_path: &Path, wal_path: &Path) -> Option<FileSig4> {
     let db = fs::metadata(db_path).ok()?;
     let wal = fs::metadata(wal_path).ok();
-    Some(FileSig4(mtime_secs(&db), db.len(), wal.as_ref().map(mtime_secs).unwrap_or(0.0), wal.as_ref().map(|m| m.len()).unwrap_or(0)))
+    Some(FileSig4(
+        mtime_secs(&db),
+        db.len(),
+        wal.as_ref().map(mtime_secs).unwrap_or(0.0),
+        wal.as_ref().map(|m| m.len()).unwrap_or(0),
+    ))
 }
 
 fn mtime_secs(meta: &fs::Metadata) -> f64 {
-    meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 fn timestamp_to_iso(timestamp: i64) -> Value {
     if timestamp <= 0 {
         Value::Null
     } else {
-        Value::String(Utc.timestamp_opt(timestamp, 0).single().unwrap_or_else(Utc::now).to_rfc3339())
+        Value::String(
+            Utc.timestamp_opt(timestamp, 0)
+                .single()
+                .unwrap_or_else(Utc::now)
+                .to_rfc3339(),
+        )
     }
 }
 
 fn message_sort_key(value: &Value) -> (i64, i64) {
-    (value.get("timestamp").and_then(Value::as_i64).unwrap_or(0), value.get("localId").and_then(Value::as_i64).unwrap_or(0))
+    (
+        value.get("timestamp").and_then(Value::as_i64).unwrap_or(0),
+        value.get("localId").and_then(Value::as_i64).unwrap_or(0),
+    )
 }
 
 fn cursor_key(rel_key: &str, table_name: &str) -> String {
@@ -1853,20 +2492,32 @@ fn normalize_limit(value: usize, maximum: usize) -> usize {
 }
 
 fn value_usize(value: Option<&Value>, default: usize) -> usize {
-    value.and_then(Value::as_u64).map(|v| v as usize).unwrap_or(default)
+    value
+        .and_then(Value::as_u64)
+        .map(|v| v as usize)
+        .unwrap_or(default)
 }
 
 fn require_string<'a>(payload: &'a Map<String, Value>, key: &str) -> Result<&'a str, String> {
-    payload.get(key).and_then(Value::as_str).filter(|v| !v.trim().is_empty()).map(str::trim).ok_or_else(|| format!("{key} 不能为空"))
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|v| !v.trim().is_empty())
+        .map(str::trim)
+        .ok_or_else(|| format!("{key} 不能为空"))
 }
 
 fn read_request_json(request: &mut Request) -> Result<Value, String> {
     let mut body = String::new();
-    request.as_reader().read_to_string(&mut body).map_err(|e| e.to_string())?;
+    request
+        .as_reader()
+        .read_to_string(&mut body)
+        .map_err(|e| e.to_string())?;
     if body.trim().is_empty() {
         return Ok(json!({}));
     }
-    let value: Value = serde_json::from_str(&body).map_err(|_| "请求体不是有效 JSON".to_string())?;
+    let value: Value =
+        serde_json::from_str(&body).map_err(|_| "请求体不是有效 JSON".to_string())?;
     if !value.is_object() {
         return Err("请求体必须是 JSON object".to_string());
     }
@@ -1877,7 +2528,13 @@ fn respond_json(request: Request, status: u16, payload: Value) {
     let body = serde_json::to_vec(&payload).unwrap_or_else(|_| b"{}".to_vec());
     let response = Response::from_data(body)
         .with_status_code(StatusCode(status))
-        .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]).unwrap());
+        .with_header(
+            Header::from_bytes(
+                &b"Content-Type"[..],
+                &b"application/json; charset=utf-8"[..],
+            )
+            .unwrap(),
+        );
     let _ = request.respond(response);
 }
 
@@ -1886,32 +2543,22 @@ fn error_response(code: &str, message: &str) -> Value {
 }
 
 fn print_json(value: &Value) -> Result<(), String> {
-    println!("{}", serde_json::to_string_pretty(value).map_err(|e| e.to_string())?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 
-fn method_declarations() -> Value {
-    json!([
-        {"name":"getRecentSessions","description":"List recent WeChat conversations with latest-message summaries.","path":"/invoke/getRecentSessions","httpMethod":"POST","timeoutSecs":30,"input_schema":{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200,"default":20}},"additionalProperties":false}},
-        {"name":"getContacts","description":"Search or list local WeChat contacts and group conversations.","path":"/invoke/getContacts","httpMethod":"POST","timeoutSecs":30,"input_schema":{"type":"object","properties":{"query":{"type":"string","default":""},"limit":{"type":"integer","minimum":1,"maximum":500,"default":50}},"additionalProperties":false}},
-        {"name":"getChatHistory","description":"Read paginated message history for one WeChat conversation by conversationId.","path":"/invoke/getChatHistory","httpMethod":"POST","timeoutSecs":60,"input_schema":{"type":"object","required":["conversationId"],"properties":{"conversationId":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":500,"default":50},"offset":{"type":"integer","minimum":0,"default":0},"startTime":{"type":"string","default":""},"endTime":{"type":"string","default":""},"oldestFirst":{"type":"boolean","default":false},"messageTypes":{"type":"array","items":{"type":"string"}}},"additionalProperties":false}},
-        {"name":"searchMessages","description":"Search local WeChat messages by keyword, optionally scoped to one conversation.","path":"/invoke/searchMessages","httpMethod":"POST","timeoutSecs":90,"input_schema":{"type":"object","required":["keyword"],"properties":{"keyword":{"type":"string"},"conversationId":{"type":"string","default":""},"limit":{"type":"integer","minimum":1,"maximum":500,"default":20},"offset":{"type":"integer","minimum":0,"default":0},"startTime":{"type":"string","default":""},"endTime":{"type":"string","default":""}},"additionalProperties":false}},
-        {"name":"getMessageById","description":"Fetch one local WeChat message by collector messageId.","path":"/invoke/getMessageById","httpMethod":"POST","timeoutSecs":30,"input_schema":{"type":"object","required":["messageId"],"properties":{"messageId":{"type":"string"}},"additionalProperties":false}},
-        {"name":"getChatImages","description":"List image messages in one WeChat conversation.","path":"/invoke/getChatImages","httpMethod":"POST","timeoutSecs":60,"input_schema":{"type":"object","required":["conversationId"],"properties":{"conversationId":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":500,"default":20},"offset":{"type":"integer","minimum":0,"default":0},"startTime":{"type":"string","default":""},"endTime":{"type":"string","default":""}},"additionalProperties":false}},
-        {"name":"getVoiceMessages","description":"List voice messages in one WeChat conversation.","path":"/invoke/getVoiceMessages","httpMethod":"POST","timeoutSecs":60,"input_schema":{"type":"object","required":["conversationId"],"properties":{"conversationId":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":500,"default":20},"offset":{"type":"integer","minimum":0,"default":0},"startTime":{"type":"string","default":""},"endTime":{"type":"string","default":""}},"additionalProperties":false}}
-    ])
-}
-
-fn message_event_payload_schema() -> Value {
-    json!({"type":"object","description":"Payload emitted for each WeChat message observed in the local database.","required":["messageId","dbPath","tableName","localId","conversationId","conversationName","isGroup","senderId","senderName","direction","messageType","messageTypeLabel","timestamp","occurredAt","source","platform"],"properties":{"messageId":{"type":"string"},"dbPath":{"type":"string"},"tableName":{"type":"string"},"localId":{"type":"integer"},"conversationId":{"type":"string"},"conversationName":{"type":"string"},"isGroup":{"type":"boolean"},"senderId":{"type":"string"},"senderName":{"type":"string"},"direction":{"type":"string","enum":["incoming","outgoing","unknown"]},"messageType":{"type":"string","enum":["text","image","voice","contact_card","video","sticker","location","app","call","system","recall","unknown"]},"messageTypeLabel":{"type":"string"},"timestamp":{"type":"integer"},"occurredAt":{"type":"string","format":"date-time"},"source":{"type":"string","enum":["wechat-local-db"]},"platform":{"type":"string"},"text":{"type":"string"}},"additionalProperties":false})
-}
-
-fn start_command_value() -> Value {
-    json!({"type": "shell_command", "command": ["wechat-bridge-collector", "start"], "timeoutSecs": 20})
-}
-
-fn render_macos_plist(exe: &Path, config: &Path, state_dir: &Path, stdout: &Path, stderr: &Path) -> String {
-    format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+fn render_macos_plist(
+    exe: &Path,
+    config: &Path,
+    state_dir: &Path,
+    stdout: &Path,
+    stderr: &Path,
+) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>com.baijimu.wechat-bridge-collector</string>
@@ -1922,7 +2569,13 @@ fn render_macos_plist(exe: &Path, config: &Path, state_dir: &Path, stdout: &Path
 <key>RunAtLoad</key><true/>
 <key>KeepAlive</key><false/>
 </dict></plist>
-"#, exe.display(), config.display(), state_dir.display(), stdout.display(), stderr.display())
+"#,
+        exe.display(),
+        config.display(),
+        state_dir.display(),
+        stdout.display(),
+        stderr.display()
+    )
 }
 
 fn run_checked(command: &mut Command, _timeout_secs: u64) -> Result<(), String> {
@@ -1930,71 +2583,43 @@ fn run_checked(command: &mut Command, _timeout_secs: u64) -> Result<(), String> 
     if output.status.success() {
         Ok(())
     } else {
-        Err(format!("command failed with exit code {:?}\nstdout:\n{}\nstderr:\n{}", output.status.code(), String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)))
+        Err(format!(
+            "command failed with exit code {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
     }
-}
-
-fn is_loopback_url(value: &str) -> bool {
-    value.contains("127.0.0.1") || value.contains("localhost") || value.contains("[::1]") || value.contains("::1")
-}
-
-fn load_bridge_agent_tokens() -> HashMap<String, String> {
-    for path in bridge_agent_config_candidates() {
-        let Ok(text) = fs::read_to_string(path) else { continue; };
-        let Ok(value) = serde_json::from_str::<Value>(&text) else { continue; };
-        let mut out = HashMap::new();
-        for key in ["event_server_token", "service_registration_token"] {
-            if let Some(token) = value.pointer(&format!("/runtime/{key}")).and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
-                out.insert(key.to_string(), token.trim().to_string());
-            }
-        }
-        if !out.is_empty() {
-            return out;
-        }
-    }
-    HashMap::new()
-}
-
-fn bridge_agent_config_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    for name in ["WS_BRIDGE_CONFIG", "BRIDGE_AGENT_CONFIG"] {
-        if let Ok(value) = env::var(name) {
-            if !value.is_empty() {
-                candidates.push(expand_home(&value));
-            }
-        }
-    }
-    if env::consts::OS == "macos" {
-        candidates.push(home_dir().join("Library/Application Support/com.baijimu.bridge-agent/agent-config.json"));
-    } else if env::consts::OS == "windows" {
-        if let Ok(value) = env::var("ProgramData") {
-            candidates.push(PathBuf::from(value).join("Baijimu/BridgeAgent/agent-config.json"));
-        }
-        if let Ok(value) = env::var("APPDATA") {
-            candidates.push(PathBuf::from(value).join("baijimu/bridge-agent/config/agent-config.json"));
-        }
-    } else {
-        candidates.push(env::var("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|_| home_dir().join(".config")).join("bridge-agent/agent-config.json"));
-    }
-    candidates.into_iter().filter(|p| p.is_file()).collect()
 }
 
 fn auto_detect_db_dir() -> Option<String> {
     let mut candidates = Vec::new();
     if env::consts::OS == "macos" {
-        let base = home_dir().join("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files");
+        let base = home_dir()
+            .join("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files");
         candidates.extend(glob_db_storage(&base));
     } else if env::consts::OS == "linux" {
         candidates.extend(glob_db_storage(&home_dir().join("Documents/xwechat_files")));
     } else if env::consts::OS == "windows" {
         if let Ok(value) = env::var("USERPROFILE") {
-            candidates.extend(glob_db_storage(&PathBuf::from(value).join("Documents/xwechat_files")));
+            candidates.extend(glob_db_storage(
+                &PathBuf::from(value).join("Documents/xwechat_files"),
+            ));
         }
         if let Ok(value) = env::var("LOCALAPPDATA") {
             candidates.extend(glob_db_storage(&PathBuf::from(value).join("xwechat_files")));
         }
     }
-    candidates.sort_by(|a, b| fs::metadata(b).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH).cmp(&fs::metadata(a).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH)));
+    candidates.sort_by(|a, b| {
+        fs::metadata(b)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+            .cmp(
+                &fs::metadata(a)
+                    .and_then(|m| m.modified())
+                    .unwrap_or(SystemTime::UNIX_EPOCH),
+            )
+    });
     candidates.first().map(|p| p.display().to_string())
 }
 
@@ -2002,12 +2627,20 @@ fn glob_db_storage(base: &Path) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(base) else {
         return Vec::new();
     };
-    entries.flatten().map(|e| e.path().join("db_storage")).filter(|p| p.is_dir()).collect()
+    entries
+        .flatten()
+        .map(|e| e.path().join("db_storage"))
+        .filter(|p| p.is_dir())
+        .collect()
 }
 
 fn resolve_state_path(value: Option<&str>, state_dir: &Path, default_path: PathBuf) -> PathBuf {
     let path = value.map(expand_home).unwrap_or(default_path);
-    if path.is_absolute() { path } else { state_dir.join(path) }
+    if path.is_absolute() {
+        path
+    } else {
+        state_dir.join(path)
+    }
 }
 
 fn expand_home(value: &str) -> PathBuf {
@@ -2024,26 +2657,52 @@ fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn default_state_dir() -> PathBuf { home_dir().join(".wechat-bridge-collector") }
-fn default_state_dir_string() -> String { default_state_dir().display().to_string() }
-fn default_bridge_base_url() -> String { DEFAULT_BRIDGE_BASE_URL.to_string() }
-fn default_service_name() -> String { "wechatLocal".to_string() }
-fn default_event_name() -> String { "messageReceived".to_string() }
-fn default_poll_interval() -> f64 { 2.0 }
-fn default_batch_size() -> usize { 200 }
-fn default_method_host() -> String { DEFAULT_HOST.to_string() }
-fn default_method_port() -> u16 { DEFAULT_PORT }
-fn default_true() -> bool { true }
-fn default_schema_version() -> i64 { 1 }
+fn default_state_dir() -> PathBuf {
+    home_dir().join(".wechat-bridge-collector")
+}
+fn default_state_dir_string() -> String {
+    default_state_dir().display().to_string()
+}
+fn default_bridge_base_url() -> String {
+    DEFAULT_BRIDGE_BASE_URL.to_string()
+}
+fn default_connector_id() -> String {
+    "com.baijimu.connector.wechat".to_string()
+}
+fn default_event_name() -> String {
+    "messageReceived".to_string()
+}
+fn default_poll_interval() -> f64 {
+    2.0
+}
+fn default_batch_size() -> usize {
+    200
+}
+fn default_method_host() -> String {
+    DEFAULT_HOST.to_string()
+}
+fn default_method_port() -> u16 {
+    DEFAULT_PORT
+}
+fn default_true() -> bool {
+    true
+}
+fn default_schema_version() -> i64 {
+    1
+}
 
 #[cfg(target_family = "unix")]
 unsafe fn libc_getuid() -> u32 {
-    unsafe extern "C" { fn getuid() -> u32; }
+    unsafe extern "C" {
+        fn getuid() -> u32;
+    }
     getuid()
 }
 
 #[cfg(not(target_family = "unix"))]
-unsafe fn libc_getuid() -> u32 { 0 }
+unsafe fn libc_getuid() -> u32 {
+    0
+}
 
 #[cfg(test)]
 mod tests {
@@ -2053,14 +2712,32 @@ mod tests {
     fn message_database_keys_exclude_hot_indexes_and_media_databases() {
         let keys = HashMap::from([
             ("message/message_0.db".to_string(), json!({"enc_key": "00"})),
-            ("message/biz_message_12.db".to_string(), json!({"enc_key": "00"})),
-            ("message\\message_3.db".to_string(), json!({"enc_key": "00"})),
-            ("message/message_fts.db".to_string(), json!({"enc_key": "00"})),
+            (
+                "message/biz_message_12.db".to_string(),
+                json!({"enc_key": "00"}),
+            ),
+            (
+                "message\\message_3.db".to_string(),
+                json!({"enc_key": "00"}),
+            ),
+            (
+                "message/message_fts.db".to_string(),
+                json!({"enc_key": "00"}),
+            ),
             ("message/media_0.db".to_string(), json!({"enc_key": "00"})),
-            ("message/message_resource.db".to_string(), json!({"enc_key": "00"})),
+            (
+                "message/message_resource.db".to_string(),
+                json!({"enc_key": "00"}),
+            ),
             ("message/message_x.db".to_string(), json!({"enc_key": "00"})),
-            ("message/nested/message_1.db".to_string(), json!({"enc_key": "00"})),
-            ("message/message_2.db".to_string(), json!({"not_a_key": true})),
+            (
+                "message/nested/message_1.db".to_string(),
+                json!({"enc_key": "00"}),
+            ),
+            (
+                "message/message_2.db".to_string(),
+                json!({"not_a_key": true}),
+            ),
         ]);
 
         assert_eq!(

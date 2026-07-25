@@ -299,7 +299,7 @@ def runtime_state(
     return {
         "product": "微信",
         "version": __version__,
-        "serviceName": config.service_name,
+        "connectorId": config.connector_id,
         "includeText": config.include_text,
         "includeOutgoing": config.include_outgoing,
         "sourceAccess": source_access,

@@ -21,8 +21,6 @@ def _load_config(args: argparse.Namespace) -> CollectorConfig:
         cfg.bridge_base_url = args.bridge_url
     if getattr(args, "event_token", None):
         cfg.bridge_event_token = args.event_token
-    if getattr(args, "service_registration_token", None):
-        cfg.service_registration_token = args.service_registration_token
     if getattr(args, "wechat_decrypt_dir", None):
         cfg.wechat_decrypt_dir = args.wechat_decrypt_dir
     if getattr(args, "wechat_decrypt_config", None):
@@ -62,16 +60,6 @@ def cmd_probe(args: argparse.Namespace) -> int:
     cfg = _load_config(args)
     source = WeChatSource(cfg)
     print(json.dumps(source.probe(), ensure_ascii=False, indent=2))
-    return 0
-
-
-def cmd_register(args: argparse.Namespace) -> int:
-    cfg = _load_config(args)
-    response = BridgeClient(cfg).register_service()
-    print(response.body)
-    if not response.ok:
-        print(f"register failed: HTTP {response.status}", file=sys.stderr)
-        return 1
     return 0
 
 
@@ -120,15 +108,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     delivery_failure_count = 0
 
     try:
-        if args.register:
-            response = bridge.register_service(method_server.base_url)
-            if not response.ok:
-                print(f"register failed: HTTP {response.status} {response.body}", file=sys.stderr)
-                return 1
-            print("registered bridge-agent service methods and events")
-
         print(
-            f"collector running service={cfg.service_name}.{cfg.event_name} "
+            f"collector running localApp={cfg.connector_id}.{cfg.event_name} "
             f"bridge={cfg.bridge_events_url} methods={method_server.base_url} state={cfg.state_path}"
         )
 
@@ -220,7 +201,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="collector config path")
     parser.add_argument("--bridge-url", help="bridge-agent local base URL")
     parser.add_argument("--event-token", help="bridge-agent event token")
-    parser.add_argument("--service-registration-token", help="bridge-agent service registration token")
     parser.add_argument("--wechat-decrypt-dir", help="wechat-decrypt source directory")
     parser.add_argument("--wechat-decrypt-config", help="wechat-decrypt config.json path")
     parser.add_argument("--db-dir", help="WeChat db_storage directory")
@@ -243,9 +223,6 @@ def build_parser() -> argparse.ArgumentParser:
     probe = sub.add_parser("probe", help="verify local WeChat decrypt/read access")
     probe.set_defaults(func=cmd_probe)
 
-    register = sub.add_parser("register", help="register event declaration in bridge-agent")
-    register.set_defaults(func=cmd_register)
-
     install_autostart_parser = sub.add_parser(
         "install-autostart",
         help="install the platform-specific background launcher and login startup hook",
@@ -262,7 +239,6 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.set_defaults(func=cmd_status)
 
     run = sub.add_parser("run", help="run the collector loop")
-    run.add_argument("--register", action="store_true", help="register service before running")
     run.add_argument("--reset-state", action="store_true", help="discard collector cursor state")
     run.add_argument("--backfill-seconds", type=int, default=0, help="broadcast recent history on fresh/reset state")
     run.add_argument("--poll-interval", type=float, default=None, help="poll interval in seconds")

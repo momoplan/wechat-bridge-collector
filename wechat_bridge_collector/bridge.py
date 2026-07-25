@@ -6,7 +6,6 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from .autostart import start_command, stop_command
 from .config import CollectorConfig
 
 
@@ -276,44 +275,9 @@ class BridgeClient:
         except Exception as exc:
             return BridgeResponse(False, 0, str(exc))
 
-    def register_service(self, method_base_url: str | None = None) -> BridgeResponse:
-        base_url = method_base_url or self.config.method_base_url
-        registration = {
-            "name": self.config.service_name,
-            "description": "Local WeChat message collector.",
-            "transport": {
-                "type": "http",
-                "baseUrl": base_url,
-            },
-            "healthCheck": {
-                "type": "http",
-                "path": "/health",
-                "timeoutSecs": 2,
-                "expectStatus": 200,
-            },
-            "methods": METHOD_DECLARATIONS,
-            "events": [
-                {
-                    "name": self.config.event_name,
-                    "description": "Emitted when a local WeChat message is observed.",
-                    "enabled": True,
-                    "payload_schema": MESSAGE_EVENT_PAYLOAD_SCHEMA,
-                }
-            ],
-            "replace": True,
-            "managed_by": "wechat-bridge-collector",
-        }
-        registration["startCommand"] = start_command()
-        registration["stopCommand"] = stop_command()
-        return self._post_json(
-            self.config.bridge_services_url,
-            registration,
-            self.config.service_registration_token,
-        )
-
     def emit_message(self, payload: dict[str, Any], event_id: str, occurred_at: str | None) -> BridgeResponse:
         request = {
-            "service": self.config.service_name,
+            "connectorId": self.config.connector_id,
             "event": self.config.event_name,
             "eventId": event_id,
             "payload": payload,

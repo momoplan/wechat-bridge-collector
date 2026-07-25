@@ -5,7 +5,6 @@ import urllib.error
 import urllib.request
 
 from wechat_bridge_collector.autostart import start_command
-from wechat_bridge_collector.bridge import BridgeClient, MESSAGE_EVENT_PAYLOAD_SCHEMA, METHOD_DECLARATIONS
 from wechat_bridge_collector.config import CollectorConfig
 from wechat_bridge_collector.query_server import (
     QueryMethodServer,
@@ -15,37 +14,7 @@ from wechat_bridge_collector.query_server import (
 from wechat_bridge_collector.wechat_source import parse_message_id, parse_time_range, resolve_type_filter
 
 
-class BridgeRegistrationTest(unittest.TestCase):
-    def test_register_service_declares_query_methods(self):
-        captured = {}
-
-        class CapturingBridgeClient(BridgeClient):
-            def _post_json(self, url, data, token=None):
-                captured["url"] = url
-                captured["data"] = data
-                return type("Response", (), {"ok": True, "status": 201, "body": "{}"})()
-
-        cfg = CollectorConfig(method_host="127.0.0.1", method_port=19090)
-        CapturingBridgeClient(cfg).register_service("http://127.0.0.1:19091")
-
-        self.assertEqual(captured["data"]["transport"]["baseUrl"], "http://127.0.0.1:19091")
-        self.assertEqual(
-            captured["data"]["healthCheck"],
-            {
-                "type": "http",
-                "path": "/health",
-                "timeoutSecs": 2,
-                "expectStatus": 200,
-            },
-        )
-        self.assertEqual(
-            [method["name"] for method in captured["data"]["methods"]],
-            [method["name"] for method in METHOD_DECLARATIONS],
-        )
-        self.assertEqual(captured["data"]["startCommand"], start_command())
-        self.assertIn("messageReceived", [event["name"] for event in captured["data"]["events"]])
-        self.assertEqual(captured["data"]["events"][0]["payload_schema"], MESSAGE_EVENT_PAYLOAD_SCHEMA)
-
+class ConnectorLifecycleTest(unittest.TestCase):
     def test_start_command_uses_collector_cli(self):
         command = start_command()
         self.assertEqual(command["type"], "shell_command")
