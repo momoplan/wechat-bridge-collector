@@ -12,6 +12,7 @@ DEFAULT_STATE_DIR = Path.home() / ".wechat-bridge-collector"
 DEFAULT_BRIDGE_BASE_URL = "http://127.0.0.1:18081"
 DEFAULT_KEYS_FILE_NAME = "all_keys.json"
 DEFAULT_DECRYPTED_DIR_NAME = "decrypted"
+PACKAGED_WECHAT_DECRYPT_DIR = Path(__file__).resolve().parents[1] / "vendor" / "wechat-decrypt"
 
 
 @dataclass
@@ -87,6 +88,7 @@ class CollectorConfig:
             candidates.append(Path(self.wechat_decrypt_dir).expanduser())
         candidates.extend(
             [
+                PACKAGED_WECHAT_DECRYPT_DIR,
                 Path.cwd() / "vendor" / "wechat-decrypt",
                 Path.cwd().parent / "wechat-decrypt",
                 Path.home() / "dev" / "wechat-decrypt",
@@ -97,8 +99,9 @@ class CollectorConfig:
                 return path
         raise RuntimeError(
             "wechat-decrypt source directory was not found. "
-            "Set WECHAT_DECRYPT_DIR or collector config `wechat_decrypt_dir` "
-            "to a clone of https://github.com/ylytdeng/wechat-decrypt."
+            "Install or upgrade the complete WeChat Connector package, or set "
+            "WECHAT_DECRYPT_DIR / collector config `wechat_decrypt_dir` "
+            "to an explicit source directory."
         )
 
     def load_wechat_decrypt_runtime(self) -> dict[str, str]:

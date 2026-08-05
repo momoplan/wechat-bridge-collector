@@ -2,11 +2,13 @@
 
 跨平台微信本地消息采集器和只读查询应用。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 的 key 提取能力，然后把新消息作为设备上的本地应用事件交给 Bridge Agent；查询方法由 `connector.json` 直接声明。
 
-从 `0.4.0` 起官方 Connector 固定使用 Python 入口 `wechat-bridge-collector-python`。仓库中保留的 Rust 实验代码和旧二进制不参与 Connector 启动解析，也不是官方市场运行路径。
+从 `0.4.0` 起官方 Connector 固定使用 Python 入口 `wechat-bridge-collector-python`。仓库中保留的 Rust 实验代码和旧二进制不参与 Connector 启动解析，也不是官方 Connector 运行路径。
 
 从 `0.6.0` 起 Connector 在百积木应用详情中提供完整的首次运行引导：无密钥时服务仍会启动，用户可在界面中自动获取、导入已有 `all_keys.json` 或重新检测，成功后无需重启即可浏览最近会话、联系人和聊天记录。界面只通过清单声明的 management operation 调用本机服务；所有 `/management/v1/*` 请求都要求 Bridge Agent 管理的私有 Connector token。
 
 从 `0.7.0` 起运行环境统一为客户安装的 Python 3.12.x。百积木只保存解释器绝对路径，并为本 Connector 创建独立的 `.bridge-agent-python` 虚拟环境；依赖严格按 `requirements.lock` 安装，不写入客户的全局 Python。
+
+从 `1.0.1` 起，Connector 使用的 `wechat-decrypt` 固定源码作为普通文件随仓库和标签归档一起发布，不再依赖 Git submodule，也不要求用户额外克隆依赖仓库。
 
 macOS 上由签名后的百积木桌面应用作为权限宿主启动 Python 子进程。Connector 不再安装或加载 LaunchAgent；这是为了让微信沙盒数据库的访问权限稳定归属到“百积木”，而不是归属到一个无稳定签名身份的独立 Python/launchd 进程。
 
@@ -49,17 +51,11 @@ businessId。安装后按下面顺序操作：
 
 1. 安装并运行 `bridge-agent`。
 2. 安装 Python 3.12.x，并在百积木“设置 > 运行环境”中检测、选择并保存 Python 3.12 的绝对路径。
-3. 克隆本仓库时带上 submodule：
+3. 克隆本仓库：
 
 ```bash
-git clone --recurse-submodules https://github.com/momoplan/wechat-bridge-collector.git
+git clone https://github.com/momoplan/wechat-bridge-collector.git
 cd wechat-bridge-collector
-```
-
-如果已经普通 clone：
-
-```bash
-git submodule update --init --recursive
 ```
 
 4. 初始化 collector 自己的配置和 key：
@@ -95,7 +91,7 @@ wechat-bridge-collector setup
 wechat-bridge-collector probe
 ```
 
-如果 `wechat-decrypt` 不在 `./vendor/wechat-decrypt`、`~/dev/wechat-decrypt` 或相邻目录，显式指定：
+发布包默认使用内置的 `./vendor/wechat-decrypt`。只有调试其它版本时才需要显式覆盖：
 
 ```bash
 export WECHAT_DECRYPT_DIR=/path/to/wechat-decrypt

@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/ylytdeng/wechat-decrypt.git",
+  "commit": "5e0eaa33fa1e77e533392db394644216c5ea6824",
+  "normalization": "text line endings and trailing whitespace",
+  "files": [
+    "config.py",
+    "find_all_keys.py",
+    "find_all_keys_linux.py",
+    "find_all_keys_macos.c",
+    "find_all_keys_windows.py",
+    "key_scan_common.py",
+    "key_utils.py"
+  ]
+}

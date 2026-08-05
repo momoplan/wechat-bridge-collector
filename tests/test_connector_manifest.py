@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from wechat_bridge_collector import __version__
 from wechat_bridge_collector.bridge import MESSAGE_EVENT_PAYLOAD_SCHEMA
 
 
@@ -15,7 +16,9 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert "services" not in manifest
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "1.0.0"
+    assert manifest["version"] == "1.0.1"
+    assert manifest["version"] == __version__
+    assert manifest["source"]["revision"] == f"v{manifest['version']}"
     assert manifest["runtime"]["command"].endswith("-python")
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'requires-python = ">=3.12,<3.13"' in pyproject
@@ -39,6 +42,30 @@ def test_connector_manifest_declares_local_app_capabilities():
     for asset in ("index.html", "app.js", "styles.css"):
         assert (ROOT / "ui" / asset).is_file()
     assert "installAutostart" not in manifest["hooks"]
+
+    upstream = json.loads(
+        (ROOT / "vendor" / "wechat-decrypt.upstream.json").read_text(encoding="utf-8")
+    )
+    dependency_files = (
+        "config.py",
+        "find_all_keys.py",
+        "find_all_keys_linux.py",
+        "find_all_keys_macos.c",
+        "find_all_keys_windows.py",
+        "key_scan_common.py",
+        "key_utils.py",
+    )
+    assert upstream == {
+        "repository": "https://github.com/ylytdeng/wechat-decrypt.git",
+        "commit": "5e0eaa33fa1e77e533392db394644216c5ea6824",
+        "normalization": "text line endings and trailing whitespace",
+        "files": list(dependency_files),
+    }
+    vendor_dir = ROOT / "vendor" / "wechat-decrypt"
+    assert {path.name for path in vendor_dir.iterdir()} == set(dependency_files)
+    for dependency_file in dependency_files:
+        assert (vendor_dir / dependency_file).is_file()
+    assert not (ROOT / ".gitmodules").exists()
 
     assert manifest["transport"]["type"] == "http"
     assert manifest["runtime"]["stopArgs"] == ["stop"]

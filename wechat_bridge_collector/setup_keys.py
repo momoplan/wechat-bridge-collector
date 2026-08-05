@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import plistlib
 import subprocess
@@ -61,18 +62,39 @@ def extract_wechat_keys(cfg: CollectorConfig, output_path: Path) -> None:
     if not script.is_file():
         raise RuntimeError(f"wechat-decrypt key extraction script not found: {script}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    env["WECHAT_DECRYPT_APP_DIR"] = str(wd_dir)
-    result = subprocess.run(
-        [sys.executable, str(script)],
-        cwd=str(output_path.parent),
-        env=env,
-        text=True,
-        capture_output=True,
-        timeout=180,
-    )
+    if not cfg.db_dir:
+        raise RuntimeError("WeChat db_storage directory was not configured")
+
+    with tempfile.TemporaryDirectory(
+        prefix=".wechat-decrypt-runtime-",
+        dir=output_path.parent,
+    ) as runtime_dir:
+        runtime_config = {
+            "db_dir": str(Path(cfg.db_dir).expanduser()),
+            "keys_file": str(output_path.resolve()),
+            "decrypted_dir": str(Path(cfg.decrypted_dir or cfg.default_decrypted_path).expanduser()),
+        }
+        Path(runtime_dir, "config.json").write_text(
+            json.dumps(runtime_config, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["WECHAT_DECRYPT_APP_DIR"] = runtime_dir
+        result = subprocess.run(
+            [sys.executable, str(script)],
+            cwd=str(output_path.parent),
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=180,
+        )
     if result.returncode != 0:
         raise RuntimeError(_format_extract_error(result.stdout, result.stderr))
+    if not output_path.is_file():
+        raise RuntimeError(
+            "wechat-decrypt key extraction did not generate the configured all_keys.json.\n"
+            + _format_extract_error(result.stdout, result.stderr)
+        )
 
 
 def _extract_macos_keys(cfg: CollectorConfig, output_path: Path) -> None:

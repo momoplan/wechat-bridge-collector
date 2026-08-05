@@ -10,7 +10,7 @@ pipeline {
     parameters {
         string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
         string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
-        string(name: 'CONNECTOR_VERSION', defaultValue: '1.0.0', description: 'WeChat Connector version')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '1.0.1', description: 'WeChat Connector version')
         string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.1.117', description: 'Minimum compatible Bridge Agent version')
         booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing Git refs')
     }
@@ -23,6 +23,7 @@ set -euo pipefail
 test -n "$SOURCE_COMMIT"
 test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
 test "$(jq -r '.version' connector.json)" = "$CONNECTOR_VERSION"
+test "$(jq -r '.source.revision' connector.json)" = "v${CONNECTOR_VERSION}"
 test "$(jq -r '.schemaVersion' connector.json)" = "2.0"
 test "$(jq -r '.runtime.command' connector.json)" = "wechat-bridge-collector-python"
 test "$(jq -r '.runtime.startPolicy' connector.json)" = "manual"
@@ -30,6 +31,14 @@ test "$(jq -r '.ui.entry' connector.json)" = "ui/index.html"
 test "$(jq -r '.management.auth.type' connector.json)" = "connector_token"
 test "$(sed -n 's/^version = "\\([^"]*\\)"/\\1/p' pyproject.toml | head -1)" = "$CONNECTOR_VERSION"
 test "$(sed -n 's/^__version__ = "\\([^"]*\\)"/\\1/p' wechat_bridge_collector/__init__.py)" = "$CONNECTOR_VERSION"
+test "$(sed -n 's/^version = "\\([^\"]*\\)"/\\1/p' Cargo.toml | head -1)" = "$CONNECTOR_VERSION"
+test ! -e .gitmodules
+test -f vendor/wechat-decrypt.upstream.json
+test "$(jq -r '.commit' vendor/wechat-decrypt.upstream.json)" = "5e0eaa33fa1e77e533392db394644216c5ea6824"
+test -f vendor/wechat-decrypt/key_utils.py
+test -f vendor/wechat-decrypt/find_all_keys.py
+test -f vendor/wechat-decrypt/find_all_keys_windows.py
+test -f vendor/wechat-decrypt/find_all_keys_macos.c
 test ! -e wechat_bridge_collector/scripts/macos/com.baijimu.wechat-bridge-collector.plist
 ! jq -e '.hooks.installAutostart' connector.json >/dev/null
 case "$CONNECTOR_VERSION" in *[!0-9.]*|'') exit 1 ;; esac
@@ -133,14 +142,38 @@ publish_remote "https://github.com/momoplan/wechat-bridge-collector.git"
             steps {
                 sh '''#!/bin/bash
 set -euo pipefail
-tag_commit="$(git ls-remote https://github.com/momoplan/wechat-bridge-collector.git "refs/tags/v${CONNECTOR_VERSION}" | awk 'NR == 1 {print $1}')"
-test "$tag_commit" = "$SOURCE_COMMIT"
-for target in 'macos&arch=aarch64' 'windows&arch=x86_64'; do
-  payload="$(curl -fsS --retry 3 --connect-timeout 5 --max-time 20 "https://www.baijimu.com/lowcode3/api/local-app-market/apps?platform=${target}")"
-  printf '%s' "$payload" | jq -e '
-    (if type == "array" then . elif type == "object" and (.data | type) == "array" then .data else [] end)
-    | all(.connectorId != "com.baijimu.connector.wechat")' >/dev/null
+for remote in \
+  https://github.com/momoplan/wechat-bridge-collector.git \
+  https://gitee.com/zxflimit_admin/wechat-bridge-collector.git; do
+  tag_commit="$(git ls-remote "$remote" "refs/tags/v${CONNECTOR_VERSION}" | awk 'NR == 1 {print $1}')"
+  test "$tag_commit" = "$SOURCE_COMMIT"
 done
+
+release_verify_dir="$(mktemp -d)"
+case "$release_verify_dir" in /tmp/*|/private/tmp/*) ;; *) exit 1 ;; esac
+trap 'rm -rf -- "$release_verify_dir"' EXIT
+
+verify_archive() {
+  archive_url="$1"
+  archive_name="$2"
+  archive_path="$release_verify_dir/$archive_name"
+  curl -fL --retry 5 --retry-all-errors --connect-timeout 10 --max-time 120 \
+    "$archive_url" -o "$archive_path"
+  sha256sum "$archive_path"
+  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/key_utils\.py$'
+  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys\.py$'
+  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys_windows\.py$'
+  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys_macos\.c$'
+  unzip -p "$archive_path" '*/connector.json' | jq -e --arg version "$CONNECTOR_VERSION" \
+    '.version == $version and .source.revision == ("v" + $version)' >/dev/null
+}
+
+verify_archive \
+  "https://github.com/momoplan/wechat-bridge-collector/archive/v${CONNECTOR_VERSION}.zip" \
+  github.zip
+verify_archive \
+  "https://gitee.com/zxflimit_admin/wechat-bridge-collector/repository/archive/v${CONNECTOR_VERSION}.zip" \
+  gitee.zip
 '''
             }
         }

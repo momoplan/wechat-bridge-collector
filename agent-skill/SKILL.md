@@ -92,7 +92,7 @@ bash {baseDir}/scripts/setup_macos.sh
 ```bash
 mkdir -p ~/baijimu-wechat-bridge
 cd ~/baijimu-wechat-bridge
-git clone --recurse-submodules https://github.com/momoplan/wechat-bridge-collector.git
+git clone https://github.com/momoplan/wechat-bridge-collector.git
 cd wechat-bridge-collector
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip

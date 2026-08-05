@@ -35,11 +35,10 @@ fi
 mkdir -p "$BASE_DIR"
 if [[ ! -d "$PROJECT_DIR/.git" ]]; then
   log "Cloning collector repo into $PROJECT_DIR"
-  git clone --recurse-submodules "$REPO_URL" "$PROJECT_DIR"
+  git clone "$REPO_URL" "$PROJECT_DIR"
 else
   log "Updating collector repo in $PROJECT_DIR"
   git -C "$PROJECT_DIR" pull --ff-only
-  git -C "$PROJECT_DIR" submodule update --init --recursive
 fi
 
 cd "$PROJECT_DIR"
