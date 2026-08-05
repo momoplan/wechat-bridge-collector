@@ -89,13 +89,19 @@ def stop_collector(config: CollectorConfig) -> AutostartResult:
     if system == "darwin":
         _remove_legacy_macos_autostart()
     pid_path = _pid_path(config)
+    pid_file_existed = pid_path.exists()
     pid = _read_pid(pid_path)
     if pid is None:
+        pid_path.unlink(missing_ok=True)
         return AutostartResult(
             status="stopped",
             platform=system,
             health_url=config.method_base_url + "/health",
-            message="collector is not running",
+            message=(
+                "collector is not running; removed stale collector pid file"
+                if pid_file_existed
+                else "collector is not running"
+            ),
         )
     if not _collector_process_matches(pid):
         pid_path.unlink(missing_ok=True)
@@ -298,6 +304,14 @@ def _process_running(pid: int) -> bool:
         return False
     except PermissionError:
         return True
+    except OSError as exc:
+        # Windows reports a missing PID as a generic OSError with
+        # ERROR_INVALID_PARAMETER (87), rather than ProcessLookupError.
+        # Treat only that documented value as a stale process; unexpected
+        # failures must remain visible instead of being mistaken for success.
+        if platform.system().lower() == "windows" and exc.winerror == 87:
+            return False
+        raise
 
 
 def _collector_process_matches(pid: int) -> bool:
