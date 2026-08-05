@@ -6,10 +6,36 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from wechat_bridge_collector.config import CollectorConfig
-from wechat_bridge_collector.setup_keys import extract_wechat_keys, setup_collector
+from wechat_bridge_collector.setup_keys import (
+    _format_extract_error,
+    extract_wechat_keys,
+    setup_collector,
+)
 
 
 class SetupKeysTest(unittest.TestCase):
+    def test_extract_error_redacts_scanner_secrets(self):
+        detail = _format_extract_error(
+            "\n".join(
+                [
+                    "image_aes_key = 28843e68111936eb",
+                    "UIN=678542980",
+                    "wxid=private_account",
+                    "MISSING: message/message_0.db (salt=16db2726561609e3601798513e6a13b2)",
+                    "[ERROR] 未能从微信进程提取到密钥",
+                ]
+            ),
+            "",
+        )
+
+        self.assertIn("key extraction failed", detail)
+        self.assertIn("MISSING: message/message_0.db", detail)
+        self.assertIn("[ERROR] 未能从微信进程提取到密钥", detail)
+        self.assertNotIn("28843e68111936eb", detail)
+        self.assertNotIn("678542980", detail)
+        self.assertNotIn("private_account", detail)
+        self.assertNotIn("16db2726561609e3601798513e6a13b2", detail)
+
     def test_setup_writes_collector_owned_config_without_extracting(self):
         with tempfile.TemporaryDirectory() as tmp:
             wd_dir = Path(tmp) / "wechat-decrypt"

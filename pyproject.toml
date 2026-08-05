@@ -1,6 +1,6 @@
 [project]
 name = "wechat-bridge-collector"
-version = "1.0.2"
+version = "1.0.3"
 description = "Cross-platform WeChat local message collector and query app for Bridge Agent."
 requires-python = ">=3.12,<3.13"
 dependencies = [

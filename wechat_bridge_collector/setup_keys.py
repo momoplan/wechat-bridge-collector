@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -205,9 +206,31 @@ def _read_entitlements(app_path: Path) -> dict:
 
 
 def _format_extract_error(stdout: str, stderr: str) -> str:
-    parts = []
-    if stdout:
-        parts.append(f"stdout:\n{stdout}")
-    if stderr:
-        parts.append(f"stderr:\n{stderr}")
-    return "\n".join(parts) or "key extraction failed"
+    diagnostics = _safe_extract_diagnostics(f"{stderr}\n{stdout}")
+    if not diagnostics:
+        return "key extraction failed; scanner returned no safe diagnostic details"
+    return "key extraction failed:\n" + "\n".join(diagnostics)
+
+
+def _safe_extract_diagnostics(output: str, limit: int = 20) -> list[str]:
+    diagnostic = re.compile(
+        r"traceback|error|exception|failed|failure|timeout|timed out|permission|denied|"
+        r"not found|missing|找不到|失败|错误|异常|超时|权限|访问|未能|未获取",
+        re.IGNORECASE,
+    )
+    sensitive_assignment = re.compile(
+        r"(?i)(image_(?:aes|xor)_key\s*=\s*)\S+|(UIN=)\d+|(wxid=)[^,\s]+"
+    )
+    long_hex = re.compile(r"(?i)\b[0-9a-f]{16,}\b")
+    safe: list[str] = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or not diagnostic.search(line):
+            continue
+        line = sensitive_assignment.sub(
+            lambda match: f"{next(group for group in match.groups() if group)}[REDACTED]",
+            line,
+        )
+        line = long_hex.sub("[REDACTED]", line)
+        safe.append(line)
+    return safe[-limit:]
