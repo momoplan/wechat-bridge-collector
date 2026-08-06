@@ -162,10 +162,10 @@ verify_archive() {
   curl -fL --retry 5 --retry-all-errors --connect-timeout 10 --max-time 120 \
     "$archive_url" -o "$archive_path"
   sha256sum "$archive_path"
-  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/key_utils\.py$'
-  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys\.py$'
-  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys_windows\.py$'
-  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys_macos\.c$'
+  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/key_utils[.]py$'
+  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys[.]py$'
+  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys_windows[.]py$'
+  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys_macos[.]c$'
   unzip -p "$archive_path" '*/connector.json' | jq -e --arg version "$CONNECTOR_VERSION" \
     '.version == $version and .source.revision == ("v" + $version)' >/dev/null
 }
