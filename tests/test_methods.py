@@ -11,7 +11,12 @@ from wechat_bridge_collector.query_server import (
     SourceAccessState,
     dispatch_method,
 )
-from wechat_bridge_collector.wechat_source import parse_message_id, parse_time_range, resolve_type_filter
+from wechat_bridge_collector.wechat_source import (
+    epoch_seconds_to_millis,
+    parse_message_id,
+    parse_time_range,
+    resolve_type_filter,
+)
 
 
 class ConnectorLifecycleTest(unittest.TestCase):
@@ -46,7 +51,8 @@ class QueryServerTest(unittest.TestCase):
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
-            self.assertTrue(payload["success"])
+            self.assertEqual(payload["errorCode"], "0")
+            self.assertIsInstance(payload["systemCurrentTime"], int)
             self.assertEqual(payload["data"]["sessions"][0]["conversationId"], "alice")
         finally:
             server.stop()
@@ -172,8 +178,12 @@ class QueryServerTest(unittest.TestCase):
 
 class QueryParsingTest(unittest.TestCase):
     def test_time_type_and_message_id_parsing(self):
-        start, end = parse_time_range("2026-06-02", "2026-06-02")
-        self.assertLess(start, end)
+        self.assertEqual(epoch_seconds_to_millis(1_785_984_572), 1_785_984_572_000)
+        start, end = parse_time_range(1_780_358_400_000, 1_780_444_799_999)
+        self.assertEqual(start, 1_780_358_400)
+        self.assertEqual(end, 1_780_444_799)
+        with self.assertRaisesRegex(ValueError, "毫秒"):
+            parse_time_range(1_780_358_400, None)
         self.assertEqual(resolve_type_filter(["text", "image"]), {1, 3})
         self.assertEqual(
             parse_message_id("message/message_0.db:Msg_0123456789abcdef0123456789abcdef:123"),

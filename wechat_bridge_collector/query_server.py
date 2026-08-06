@@ -186,7 +186,7 @@ class QueryMethodServer:
                     payload = self._read_json()
                     current_source = require_source(source, source_runtime, access_state)
                     result = dispatch_method(current_source, method, payload)
-                    self._write_json(200, {"success": True, "data": result, "error": None})
+                    self._write_json(200, success_response(result))
                 except SourceAccessUnavailable as exc:
                     self._write_json(
                         503,
@@ -231,12 +231,30 @@ class QueryMethodServer:
 
 def error_response(code: str, message: str) -> dict[str, Any]:
     return {
-        "success": False,
+        "errorCode": code,
+        "value": message,
         "data": None,
+        "systemCurrentTime": int(time.time() * 1000),
         "error": {
             "code": code,
+            "domain": "wechat-connector.baijimu",
+            "reason": code,
+            "category": "validation" if code == "BAD_REQUEST" else "internal",
             "message": message,
+            "userMessage": message,
+            "retryable": code in {"SOURCE_NOT_READY", "INTERNAL_ERROR"},
+            "source": {"service": "wechat-bridge-collector"},
+            "trace": {"requestId": secrets.token_hex(12)},
         },
+    }
+
+
+def success_response(data: Any) -> dict[str, Any]:
+    return {
+        "errorCode": "0",
+        "value": "成功",
+        "data": data,
+        "systemCurrentTime": int(time.time() * 1000),
     }
 
 
@@ -353,8 +371,8 @@ def dispatch_method(source: WeChatSource, method: str, payload: dict[str, Any]) 
             require_string(p, "conversationId"),
             limit=p.get("limit", 50),
             offset=p.get("offset", 0),
-            start_time=p.get("startTime") or p.get("start_time") or "",
-            end_time=p.get("endTime") or p.get("end_time") or "",
+            start_time=p.get("startTime", p.get("start_time")),
+            end_time=p.get("endTime", p.get("end_time")),
             oldest_first=bool(p.get("oldestFirst", p.get("oldest_first", False))),
             message_types=p.get("messageTypes") or p.get("message_types"),
         ),
@@ -363,23 +381,23 @@ def dispatch_method(source: WeChatSource, method: str, payload: dict[str, Any]) 
             conversation_id=str(p.get("conversationId") or ""),
             limit=p.get("limit", 20),
             offset=p.get("offset", 0),
-            start_time=p.get("startTime") or p.get("start_time") or "",
-            end_time=p.get("endTime") or p.get("end_time") or "",
+            start_time=p.get("startTime", p.get("start_time")),
+            end_time=p.get("endTime", p.get("end_time")),
         ),
         "getMessageById": lambda p: {"message": source.get_message_by_id(require_string(p, "messageId"))},
         "getChatImages": lambda p: source.get_chat_images(
             require_string(p, "conversationId"),
             limit=p.get("limit", 20),
             offset=p.get("offset", 0),
-            start_time=p.get("startTime") or p.get("start_time") or "",
-            end_time=p.get("endTime") or p.get("end_time") or "",
+            start_time=p.get("startTime", p.get("start_time")),
+            end_time=p.get("endTime", p.get("end_time")),
         ),
         "getVoiceMessages": lambda p: source.get_voice_messages(
             require_string(p, "conversationId"),
             limit=p.get("limit", 20),
             offset=p.get("offset", 0),
-            start_time=p.get("startTime") or p.get("start_time") or "",
-            end_time=p.get("endTime") or p.get("end_time") or "",
+            start_time=p.get("startTime", p.get("start_time")),
+            end_time=p.get("endTime", p.get("end_time")),
         ),
     }
     handler = handlers.get(method)

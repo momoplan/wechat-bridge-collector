@@ -10,7 +10,7 @@ pipeline {
     parameters {
         string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
         string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
-        string(name: 'CONNECTOR_VERSION', defaultValue: '1.0.3', description: 'WeChat Connector version')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '2.0.0', description: 'WeChat Connector version')
         string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.1.117', description: 'Minimum compatible Bridge Agent version')
         booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing Git refs')
     }
@@ -21,7 +21,9 @@ pipeline {
                 sh '''#!/bin/bash
 set -euo pipefail
 test -n "$SOURCE_COMMIT"
+test "$SOURCE_REF" = "main"
 test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+test "$(git ls-remote https://gitee.com/zxflimit_admin/wechat-bridge-collector.git refs/heads/main | awk 'NR == 1 {print $1}')" = "$SOURCE_COMMIT"
 test "$(jq -r '.version' connector.json)" = "$CONNECTOR_VERSION"
 test "$(jq -r '.source.revision' connector.json)" = "v${CONNECTOR_VERSION}"
 test "$(jq -r '.schemaVersion' connector.json)" = "2.0"

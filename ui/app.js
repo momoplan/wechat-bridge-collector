@@ -101,12 +101,7 @@ function initials(value) {
 
 function formatTime(value, includeDate = false) {
   const numeric = Number(value);
-  let date;
-  if (Number.isFinite(numeric) && numeric > 0) {
-    date = new Date(numeric < 10_000_000_000 ? numeric * 1000 : numeric);
-  } else {
-    date = new Date(String(value || ""));
-  }
+  const date = Number.isSafeInteger(numeric) && numeric > 0 ? new Date(numeric) : new Date(Number.NaN);
   if (!Number.isFinite(date.getTime())) return "时间未知";
   return new Intl.DateTimeFormat("zh-CN", includeDate
     ? { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }
@@ -143,7 +138,7 @@ function renderSessions() {
     const meta = document.createElement("span");
     meta.className = "conversation-meta";
     const time = document.createElement("time");
-    time.textContent = formatTime(session.lastTimestamp || session.lastOccurredAt, true);
+    time.textContent = formatTime(session.lastTimestamp, true);
     meta.append(time);
     const unreadCount = Number(session.unreadCount) || 0;
     if (unreadCount > 0) {
@@ -258,7 +253,7 @@ function messageCard(message) {
   const sender = document.createElement("strong");
   sender.textContent = message?.direction === "outgoing" ? "我" : text(message?.senderName, "未知发送者");
   const time = document.createElement("span");
-  time.textContent = formatTime(message?.timestamp || message?.occurredAt, true);
+  time.textContent = formatTime(message?.timestamp, true);
   head.append(sender, time);
   const content = document.createElement("p");
   content.className = "message-text";
@@ -366,7 +361,7 @@ function renderSearchResults() {
     const content = document.createElement("p");
     content.textContent = text(message.text, `[${text(message.messageTypeLabel, "非文本消息")}]`);
     const time = document.createElement("time");
-    time.textContent = formatTime(message.timestamp || message.occurredAt, true);
+    time.textContent = formatTime(message.timestamp, true);
     item.append(conversation, content, time);
     elements["search-results"].append(item);
   });

@@ -1,6 +1,6 @@
 use aes::Aes256;
 use cbc::cipher::{block_padding::NoPadding, BlockDecryptMut, KeyIvInit};
-use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use reqwest::blocking::Client;
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
@@ -763,8 +763,7 @@ impl WeChatSource {
                     "isGroup": is_group,
                     "unreadCount": row.unread_count,
                     "summary": text,
-                    "lastTimestamp": row.last_timestamp,
-                    "lastOccurredAt": timestamp_to_iso(row.last_timestamp),
+                    "lastTimestamp": if row.last_timestamp > 0 { Some(row.last_timestamp * 1000) } else { None },
                     "lastMessageType": type_name,
                     "lastSenderId": sender_id,
                     "lastSenderName": names.get(&sender_id).cloned().unwrap_or(if !row.last_sender_display_name.is_empty() { row.last_sender_display_name } else { sender_id.clone() }),
@@ -1178,8 +1177,7 @@ impl WeChatSource {
             "direction": direction,
             "messageType": type_name,
             "messageTypeLabel": type_label,
-            "timestamp": row.create_time,
-            "occurredAt": occurred_at,
+            "timestamp": row.create_time * 1000,
             "source": "wechat-local-db",
             "platform": env::consts::OS,
         });
@@ -2188,48 +2186,17 @@ fn parse_time_range(start: &Value, end: &Value) -> Result<(Option<i64>, Option<i
     Ok((start_ts, end_ts))
 }
 
-fn parse_time_value(value: &Value, is_end: bool) -> Result<Option<i64>, String> {
+fn parse_time_value(value: &Value, _is_end: bool) -> Result<Option<i64>, String> {
     if value.is_null() {
         return Ok(None);
     }
     if let Some(n) = value.as_i64() {
-        return Ok(Some(n));
+        if n < 100_000_000_000 {
+            return Err("时间范围必须使用毫秒，不能传秒级时间戳".to_string());
+        }
+        return Ok(Some(n / 1000));
     }
-    if let Some(n) = value.as_f64() {
-        return Ok(Some(n as i64));
-    }
-    let text = value.as_str().unwrap_or("").trim();
-    if text.is_empty() {
-        return Ok(None);
-    }
-    if text.chars().all(|c| c.is_ascii_digit()) {
-        return text.parse::<i64>().map(Some).map_err(|e| e.to_string());
-    }
-    let normalized = text.replace('T', " ");
-    if let Ok(dt) = NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M"))
-    {
-        return Ok(Local
-            .from_local_datetime(&dt)
-            .single()
-            .map(|d| d.timestamp()));
-    }
-    if let Ok(date) = NaiveDate::parse_from_str(&normalized, "%Y-%m-%d") {
-        let dt = date
-            .and_hms_opt(
-                if is_end { 23 } else { 0 },
-                if is_end { 59 } else { 0 },
-                if is_end { 59 } else { 0 },
-            )
-            .unwrap();
-        return Ok(Local
-            .from_local_datetime(&dt)
-            .single()
-            .map(|d| d.timestamp()));
-    }
-    DateTime::parse_from_rfc3339(text)
-        .map(|dt| Some(dt.timestamp()))
-        .map_err(|_| format!("无法解析时间: {text}"))
+    Err("时间范围必须使用 Unix epoch 毫秒整数".to_string())
 }
 
 fn resolve_type_filter(value: Option<&Value>) -> Result<Option<HashSet<i64>>, String> {
@@ -2461,19 +2428,6 @@ fn mtime_secs(meta: &fs::Metadata) -> f64 {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
-}
-
-fn timestamp_to_iso(timestamp: i64) -> Value {
-    if timestamp <= 0 {
-        Value::Null
-    } else {
-        Value::String(
-            Utc.timestamp_opt(timestamp, 0)
-                .single()
-                .unwrap_or_else(Utc::now)
-                .to_rfc3339(),
-        )
-    }
 }
 
 fn message_sort_key(value: &Value) -> (i64, i64) {

@@ -16,7 +16,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert "services" not in manifest
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "1.0.3"
+    assert manifest["version"] == "2.0.0"
     assert manifest["version"] == __version__
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
     assert manifest["runtime"]["command"].endswith("-python")
@@ -73,3 +73,11 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["events"][0]["payload_schema"] == MESSAGE_EVENT_PAYLOAD_SCHEMA
     assert "conversationId" in manifest["events"][0]["payload_schema"]["properties"]
     assert "senderName" in manifest["events"][0]["payload_schema"]["properties"]
+    event_schema = manifest["events"][0]["payload_schema"]
+    assert event_schema["properties"]["timestamp"]["type"] == "integer"
+    assert "occurredAt" not in event_schema["properties"]
+    for method in manifest["methods"]:
+        properties = method["input_schema"].get("properties", {})
+        for field in ("startTime", "endTime"):
+            if field in properties:
+                assert properties[field]["type"] == "integer"

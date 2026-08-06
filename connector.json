@@ -2,7 +2,7 @@
   "schemaVersion": "2.0",
   "id": "com.baijimu.connector.wechat",
   "name": "WeChat Connector",
-  "version": "1.0.3",
+  "version": "2.0.0",
   "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
   "publisher": {
     "name": "Baijimu",
@@ -11,7 +11,7 @@
   "source": {
     "type": "github",
     "repo": "momoplan/wechat-bridge-collector",
-    "revision": "v1.0.3"
+    "revision": "v2.0.0"
   },
   "runtime": {
     "type": "process",
@@ -210,12 +210,12 @@
             "default": 0
           },
           "startTime": {
-            "type": "string",
-            "default": ""
+            "type": "integer",
+            "description": "Inclusive Unix epoch milliseconds."
           },
           "endTime": {
-            "type": "string",
-            "default": ""
+            "type": "integer",
+            "description": "Inclusive Unix epoch milliseconds."
           },
           "oldestFirst": {
             "type": "boolean",
@@ -263,12 +263,12 @@
             "default": 0
           },
           "startTime": {
-            "type": "string",
-            "default": ""
+            "type": "integer",
+            "description": "Inclusive Unix epoch milliseconds."
           },
           "endTime": {
-            "type": "string",
-            "default": ""
+            "type": "integer",
+            "description": "Inclusive Unix epoch milliseconds."
           }
         },
         "additionalProperties": false
@@ -321,12 +321,12 @@
             "default": 0
           },
           "startTime": {
-            "type": "string",
-            "default": ""
+            "type": "integer",
+            "description": "Inclusive Unix epoch milliseconds."
           },
           "endTime": {
-            "type": "string",
-            "default": ""
+            "type": "integer",
+            "description": "Inclusive Unix epoch milliseconds."
           }
         },
         "additionalProperties": false
@@ -360,12 +360,12 @@
             "default": 0
           },
           "startTime": {
-            "type": "string",
-            "default": ""
+            "type": "integer",
+            "description": "Inclusive Unix epoch milliseconds."
           },
           "endTime": {
-            "type": "string",
-            "default": ""
+            "type": "integer",
+            "description": "Inclusive Unix epoch milliseconds."
           }
         },
         "additionalProperties": false
@@ -394,7 +394,6 @@
           "messageType",
           "messageTypeLabel",
           "timestamp",
-          "occurredAt",
           "source",
           "platform"
         ],
@@ -468,12 +467,7 @@
           },
           "timestamp": {
             "type": "integer",
-            "description": "Message create time as Unix timestamp seconds."
-          },
-          "occurredAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Message create time in ISO 8601 UTC format."
+            "description": "Message create time as Unix epoch milliseconds."
           },
           "source": {
             "type": "string",

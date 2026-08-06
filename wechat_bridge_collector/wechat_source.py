@@ -459,8 +459,7 @@ class WeChatSource:
                     "isGroup": is_group,
                     "unreadCount": int(unread or 0),
                     "summary": text,
-                    "lastTimestamp": int(ts or 0),
-                    "lastOccurredAt": timestamp_to_iso(int(ts or 0)),
+                    "lastTimestamp": epoch_seconds_to_millis(int(ts)) if int(ts or 0) > 0 else None,
                     "lastMessageType": TYPE_LABELS.get(int(msg_type or 0) & 0xFFFFFFFF, ("unknown", f"type={msg_type or 0}"))[0],
                     "lastSenderId": sender_id,
                     "lastSenderName": names.get(sender_id, sender_name or sender_id),
@@ -903,8 +902,7 @@ class WeChatSource:
             "direction": direction,
             "messageType": type_name,
             "messageTypeLabel": type_label,
-            "timestamp": create_time,
-            "occurredAt": occurred_at,
+            "timestamp": epoch_seconds_to_millis(create_time),
             "source": "wechat-local-db",
             "platform": platform.system().lower(),
         }
@@ -1032,6 +1030,10 @@ def timestamp_to_iso(timestamp: int) -> str | None:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
 
+def epoch_seconds_to_millis(timestamp: int) -> int:
+    return timestamp * 1000
+
+
 def parse_time_range(start_time: Any, end_time: Any) -> tuple[int | None, int | None]:
     start_ts = parse_time_value(start_time, is_end=False)
     end_ts = parse_time_value(end_time, is_end=True)
@@ -1041,34 +1043,13 @@ def parse_time_range(start_time: Any, end_time: Any) -> tuple[int | None, int | 
 
 
 def parse_time_value(value: Any, is_end: bool) -> int | None:
-    if value is None or value == "":
+    if value is None:
         return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    text = str(value).strip()
-    if not text:
-        return None
-    if text.isdigit():
-        return int(text)
-    normalized = text.replace("T", " ")
-    formats = [
-        ("%Y-%m-%d %H:%M:%S", False),
-        ("%Y-%m-%d %H:%M", False),
-        ("%Y-%m-%d", True),
-    ]
-    for fmt, date_only in formats:
-        try:
-            dt = datetime.strptime(normalized, fmt)
-            if date_only and is_end:
-                dt = dt.replace(hour=23, minute=59, second=59)
-            return int(dt.timestamp())
-        except ValueError:
-            continue
-    try:
-        dt = datetime.fromisoformat(text)
-        return int(dt.timestamp())
-    except ValueError as exc:
-        raise ValueError(f"无法解析时间: {value}") from exc
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("时间范围必须使用 Unix epoch 毫秒整数")
+    if value < 100_000_000_000:
+        raise ValueError("时间范围必须使用毫秒，不能传秒级时间戳")
+    return value // 1000
 
 
 def resolve_type_filter(message_types: list[str] | None) -> set[int] | None:

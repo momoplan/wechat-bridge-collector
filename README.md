@@ -10,6 +10,8 @@
 
 从 `1.0.1` 起，Connector 使用的 `wechat-decrypt` 固定源码作为普通文件随仓库和标签归档一起发布，不再依赖 Git submodule，也不要求用户额外克隆依赖仓库。
 
+从 `2.0.0` 起，所有公开业务时间字段统一为 Unix epoch 毫秒整数。查询范围的 `startTime`、`endTime`，会话的 `lastTimestamp` 和消息的 `timestamp` 均使用毫秒；ISO 8601 字符串只允许在界面显示层生成，不再作为 Connector 数据契约返回。
+
 macOS 上由签名后的百积木桌面应用作为权限宿主启动 Python 子进程。Connector 不再安装或加载 LaunchAgent；这是为了让微信沙盒数据库的访问权限稳定归属到“百积木”，而不是归属到一个无稳定签名身份的独立 Python/launchd 进程。
 
 ## 架构
@@ -165,8 +167,7 @@ payload 示例：
   "messageType": "text",
   "messageTypeLabel": "文本",
   "text": "消息内容",
-  "timestamp": 1780106113,
-  "occurredAt": "2026-05-30T10:00:00+00:00",
+  "timestamp": 1780106113000,
   "source": "wechat-local-db",
   "platform": "darwin"
 }
@@ -202,11 +203,12 @@ curl -s http://127.0.0.1:18082/invoke/getChatHistory \
 
 ```json
 {
-  "success": true,
+  "errorCode": "0",
+  "value": "成功",
   "data": {
     "messages": []
   },
-  "error": null
+  "systemCurrentTime": 1780106113000
 }
 ```
 
