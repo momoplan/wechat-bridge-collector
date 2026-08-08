@@ -1,3 +1,5 @@
+import { dateInputsToEpochRange } from "./time-range.mjs";
+
 const ids = [
   "runtime-badge", "refresh-button", "reload-status-button", "notice", "error",
   "chats-view", "contacts-view", "search-view", "status-view", "session-count",
@@ -211,8 +213,10 @@ async function loadHistory(appendOlder) {
       conversationId: selectedSession.conversationId,
       limit: PAGE_SIZE,
       offset,
-      startTime: elements["history-start"].value,
-      endTime: elements["history-end"].value,
+      ...dateInputsToEpochRange(
+        elements["history-start"].value,
+        elements["history-end"].value,
+      ),
       oldestFirst: false,
       messageTypes: selectedMessageTypes(),
     });
@@ -310,8 +314,10 @@ function currentSearchPayload(offset = 0) {
   return {
     keyword: elements["search-keyword"].value.trim(),
     conversationId: elements["search-scope"].value,
-    startTime: elements["search-start"].value,
-    endTime: elements["search-end"].value,
+    ...dateInputsToEpochRange(
+      elements["search-start"].value,
+      elements["search-end"].value,
+    ),
     limit: PAGE_SIZE,
     offset,
   };
@@ -319,9 +325,15 @@ function currentSearchPayload(offset = 0) {
 
 async function runSearch(append) {
   if (busy.has("search")) return;
-  const payload = append && lastSearchPayload
-    ? { ...lastSearchPayload, offset: searchOffset }
-    : currentSearchPayload(0);
+  let payload;
+  try {
+    payload = append && lastSearchPayload
+      ? { ...lastSearchPayload, offset: searchOffset }
+      : currentSearchPayload(0);
+  } catch (error) {
+    setNotice(errorMessage(error), true);
+    return;
+  }
   if (!payload.keyword) {
     setNotice("请输入要搜索的关键词。", true);
     return;

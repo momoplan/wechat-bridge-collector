@@ -16,7 +16,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert "services" not in manifest
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "2.0.1"
+    assert manifest["version"] == "2.0.2"
     assert manifest["version"] == __version__
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
     assert manifest["runtime"]["command"].endswith("-python")
@@ -39,7 +39,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["management"]["operations"]["acquireKeys"]["path"] == "/management/v1/acquire-keys"
     assert manifest["management"]["operations"]["importKeys"]["path"] == "/management/v1/import-keys"
     assert manifest["management"]["operations"]["retrySetup"]["path"] == "/management/v1/retry-setup"
-    for asset in ("index.html", "app.js", "styles.css"):
+    for asset in ("index.html", "app.js", "styles.css", "time-range.mjs"):
         assert (ROOT / "ui" / asset).is_file()
     assert "installAutostart" not in manifest["hooks"]
 
@@ -81,3 +81,13 @@ def test_connector_manifest_declares_local_app_capabilities():
         for field in ("startTime", "endTime"):
             if field in properties:
                 assert properties[field]["type"] == "integer"
+
+
+def test_embedded_ui_converts_date_filters_to_epoch_milliseconds():
+    app_source = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
+    assert 'from "./time-range.mjs"' in app_source
+    assert app_source.count("...dateInputsToEpochRange(") == 2
+    assert 'startTime: elements["history-start"].value' not in app_source
+    assert 'endTime: elements["history-end"].value' not in app_source
+    assert 'startTime: elements["search-start"].value' not in app_source
+    assert 'endTime: elements["search-end"].value' not in app_source
