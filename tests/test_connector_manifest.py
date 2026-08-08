@@ -91,3 +91,12 @@ def test_embedded_ui_converts_date_filters_to_epoch_milliseconds():
     assert 'endTime: elements["history-end"].value' not in app_source
     assert 'startTime: elements["search-start"].value' not in app_source
     assert 'endTime: elements["search-end"].value' not in app_source
+
+
+def test_release_pipeline_uses_authenticated_remote_verification():
+    pipeline = (ROOT / "Jenkinsfile.wechat-release").read_text(encoding="utf-8")
+    assert 'git rev-parse refs/remotes/origin/main' in pipeline
+    assert 'published_refs="$(git ls-remote "$remote"' in pipeline
+    assert pipeline.count("git ls-remote") == 3
+    verify_stage = pipeline.split("stage('Verify published release')", maxsplit=1)[1]
+    assert "git ls-remote" not in verify_stage

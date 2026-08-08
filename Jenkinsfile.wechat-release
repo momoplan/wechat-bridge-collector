@@ -23,7 +23,8 @@ set -euo pipefail
 test -n "$SOURCE_COMMIT"
 test "$SOURCE_REF" = "main"
 test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
-test "$(git ls-remote https://gitee.com/zxflimit_admin/wechat-bridge-collector.git refs/heads/main | awk 'NR == 1 {print $1}')" = "$SOURCE_COMMIT"
+test "$(git config --get remote.origin.url)" = "https://gitee.com/zxflimit_admin/wechat-bridge-collector.git"
+test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_COMMIT"
 test "$(jq -r '.version' connector.json)" = "$CONNECTOR_VERSION"
 test "$(jq -r '.source.revision' connector.json)" = "v${CONNECTOR_VERSION}"
 test "$(jq -r '.schemaVersion' connector.json)" = "2.0"
@@ -126,6 +127,10 @@ publish_remote() {
   else
     git push "$remote" "$SOURCE_COMMIT:refs/tags/$tag"
   fi
+
+  published_refs="$(git ls-remote "$remote" refs/heads/main "refs/tags/$tag")"
+  test "$(printf '%s\n' "$published_refs" | awk '$2 == "refs/heads/main" {print $1}')" = "$SOURCE_COMMIT"
+  test "$(printf '%s\n' "$published_refs" | awk -v tag="refs/tags/$tag" '$2 == tag {print $1}')" = "$SOURCE_COMMIT"
 }
 
 export GIT_AUTH_USER="$GITEE_USER"
@@ -146,13 +151,6 @@ publish_remote "https://github.com/momoplan/wechat-bridge-collector.git"
             steps {
                 sh '''#!/bin/bash
 set -euo pipefail
-for remote in \
-  https://github.com/momoplan/wechat-bridge-collector.git \
-  https://gitee.com/zxflimit_admin/wechat-bridge-collector.git; do
-  tag_commit="$(git ls-remote "$remote" "refs/tags/v${CONNECTOR_VERSION}" | awk 'NR == 1 {print $1}')"
-  test "$tag_commit" = "$SOURCE_COMMIT"
-done
-
 release_verify_dir="$(mktemp -d)"
 case "$release_verify_dir" in /tmp/*|/private/tmp/*) ;; *) exit 1 ;; esac
 trap 'rm -rf -- "$release_verify_dir"' EXIT
