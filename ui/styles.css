@@ -197,6 +197,8 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px c
   background: #fbfcfc;
 }
 .conversation-item:hover, .conversation-item.active { border-color: color-mix(in srgb, var(--accent) 44%, #cfd9d4); background: var(--accent-faint); }
+.conversation-item.summary-only:disabled { cursor: default; opacity: 1; background: #f5f7f6; }
+.conversation-item.summary-only:disabled:hover { border-color: var(--line); }
 .avatar {
   display: grid;
   place-items: center;
@@ -213,6 +215,7 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px c
 .conversation-copy strong { font-size: 13px; }
 .conversation-copy span { color: var(--muted); font-size: 11px; }
 .conversation-meta { display: flex; align-items: flex-end; flex-direction: column; gap: 6px; color: var(--muted); font-size: 10px; }
+.summary-only-label { border-radius: 999px; padding: 2px 6px; color: var(--warning); background: var(--warning-soft); font-weight: 750; }
 .unread { min-width: 19px; border-radius: 999px; padding: 2px 5px; color: #fff; text-align: center; background: var(--accent); }
 
 .message-panel { display: flex; min-width: 0; flex-direction: column; padding: 19px; }

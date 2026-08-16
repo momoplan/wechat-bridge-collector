@@ -2,7 +2,7 @@ use aes::Aes256;
 use cbc::cipher::{block_padding::NoPadding, BlockDecryptMut, KeyIvInit};
 use chrono::{TimeZone, Utc};
 use reqwest::blocking::Client;
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, params_from_iter, Connection, Row};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -747,6 +747,8 @@ impl WeChatSource {
             let rows = query_session_rows(&conn, sql, normalize_limit(limit, 200))
                 .or_else(|_| query_session_rows(&conn, fallback, normalize_limit(limit, 200)))
                 .unwrap_or_default();
+            let readable_usernames =
+                self.usernames_with_message_tables(rows.iter().map(|row| row.username.as_str()));
             for row in rows {
                 let is_group = row.username.contains("@chatroom");
                 let summary = decompress_content(row.summary, None).unwrap_or_default();
@@ -761,6 +763,7 @@ impl WeChatSource {
                     "conversationId": row.username,
                     "conversationName": names.get(&row.username).cloned().unwrap_or(row.username.clone()),
                     "isGroup": is_group,
+                    "historyAvailable": readable_usernames.contains(&row.username),
                     "unreadCount": row.unread_count,
                     "summary": text,
                     "lastTimestamp": if row.last_timestamp > 0 { Some(row.last_timestamp * 1000) } else { None },
@@ -771,6 +774,56 @@ impl WeChatSource {
             }
         }
         sessions
+    }
+
+    fn usernames_with_message_tables<'a>(
+        &self,
+        usernames: impl IntoIterator<Item = &'a str>,
+    ) -> HashSet<String> {
+        let table_to_username = usernames
+            .into_iter()
+            .filter(|username| !username.is_empty())
+            .map(|username| {
+                (
+                    format!("Msg_{:x}", md5::compute(username.as_bytes())),
+                    username.to_string(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        if table_to_username.is_empty() {
+            return HashSet::new();
+        }
+
+        let table_names = table_to_username.keys().cloned().collect::<Vec<_>>();
+        let placeholders = std::iter::repeat_n("?", table_names.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ({placeholders})"
+        );
+        let mut readable = HashSet::new();
+        for rel_key in &self.msg_db_keys {
+            let Ok(Some(path)) = self.cache.get(rel_key) else {
+                continue;
+            };
+            let Ok(conn) = Connection::open(path) else {
+                continue;
+            };
+            let Ok(mut stmt) = conn.prepare(&sql) else {
+                continue;
+            };
+            let Ok(rows) = stmt.query_map(params_from_iter(table_names.iter()), |row| {
+                row.get::<_, String>(0)
+            }) else {
+                continue;
+            };
+            for table_name in rows.flatten() {
+                if let Some(username) = table_to_username.get(&table_name) {
+                    readable.insert(username.clone());
+                }
+            }
+        }
+        readable
     }
 
     fn bootstrap_state(&self, state: &mut CollectorState, backfill_seconds: i64) {

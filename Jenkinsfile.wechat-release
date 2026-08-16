@@ -10,7 +10,7 @@ pipeline {
     parameters {
         string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
         string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
-        string(name: 'CONNECTOR_VERSION', defaultValue: '2.0.2', description: 'WeChat Connector version')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '2.0.3', description: 'WeChat Connector version')
         string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.1.117', description: 'Minimum compatible Bridge Agent version')
         booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing Git refs')
     }
@@ -63,7 +63,7 @@ python3 -m pip install \
   --target "$release_python" \
   . pytest
 PYTHONPATH="$release_python:$WORKSPACE" python3 -m pytest -q
-node --test tests/ui_time.test.mjs
+node --test tests/*.test.mjs
 python3 -m py_compile wechat_bridge_collector/*.py
 bash -n agent-skill/scripts/setup_macos.sh
 jq -e . connector.json >/dev/null
@@ -73,6 +73,7 @@ test -f ui/index.html
 test -f ui/app.js
 test -f ui/styles.css
 test -f ui/time-range.mjs
+test -f ui/session-model.mjs
 '''
             }
         }
@@ -167,6 +168,7 @@ verify_zip_archive() {
   unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys_windows[.]py$'
   unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys_macos[.]c$'
   unzip -Z1 "$archive_path" | grep -Eq '/ui/time-range[.]mjs$'
+  unzip -Z1 "$archive_path" | grep -Eq '/ui/session-model[.]mjs$'
   unzip -p "$archive_path" '*/connector.json' | jq -e --arg version "$CONNECTOR_VERSION" \
     '.version == $version and .source.revision == ("v" + $version)' >/dev/null
 }
@@ -178,6 +180,7 @@ tar -tf "$source_archive" | grep -Eq '^vendor/wechat-decrypt/find_all_keys[.]py$
 tar -tf "$source_archive" | grep -Eq '^vendor/wechat-decrypt/find_all_keys_windows[.]py$'
 tar -tf "$source_archive" | grep -Eq '^vendor/wechat-decrypt/find_all_keys_macos[.]c$'
 tar -tf "$source_archive" | grep -Eq '^ui/time-range[.]mjs$'
+tar -tf "$source_archive" | grep -Eq '^ui/session-model[.]mjs$'
 tar -xOf "$source_archive" connector.json | jq -e --arg version "$CONNECTOR_VERSION" \
   '.version == $version and .source.revision == ("v" + $version)' >/dev/null
 

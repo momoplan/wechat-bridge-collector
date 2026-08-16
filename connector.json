@@ -2,7 +2,7 @@
   "schemaVersion": "2.0",
   "id": "com.baijimu.connector.wechat",
   "name": "WeChat Connector",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
   "publisher": {
     "name": "Baijimu",
@@ -11,7 +11,7 @@
   "source": {
     "type": "github",
     "repo": "momoplan/wechat-bridge-collector",
-    "revision": "v2.0.2"
+    "revision": "v2.0.3"
   },
   "runtime": {
     "type": "process",
@@ -142,7 +142,7 @@
   "methods": [
     {
       "name": "getRecentSessions",
-      "description": "List recent WeChat conversations with latest-message summaries.",
+      "description": "List recent WeChat conversations with latest-message summaries and whether each conversation has readable history.",
       "path": "/invoke/getRecentSessions",
       "httpMethod": "POST",
       "timeoutSecs": 30,

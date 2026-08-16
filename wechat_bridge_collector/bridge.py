@@ -12,7 +12,7 @@ from .config import CollectorConfig
 METHOD_DECLARATIONS: list[dict[str, Any]] = [
     {
         "name": "getRecentSessions",
-        "description": "List recent WeChat conversations with latest-message summaries.",
+        "description": "List recent WeChat conversations with latest-message summaries and whether each conversation has readable history.",
         "path": "/invoke/getRecentSessions",
         "httpMethod": "POST",
         "timeoutSecs": 30,

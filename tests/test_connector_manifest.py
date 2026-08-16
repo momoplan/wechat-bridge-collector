@@ -16,7 +16,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert "services" not in manifest
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "2.0.2"
+    assert manifest["version"] == "2.0.3"
     assert manifest["version"] == __version__
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
     assert manifest["runtime"]["command"].endswith("-python")
@@ -39,7 +39,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["management"]["operations"]["acquireKeys"]["path"] == "/management/v1/acquire-keys"
     assert manifest["management"]["operations"]["importKeys"]["path"] == "/management/v1/import-keys"
     assert manifest["management"]["operations"]["retrySetup"]["path"] == "/management/v1/retry-setup"
-    for asset in ("index.html", "app.js", "styles.css", "time-range.mjs"):
+    for asset in ("index.html", "app.js", "styles.css", "time-range.mjs", "session-model.mjs"):
         assert (ROOT / "ui" / asset).is_file()
     assert "installAutostart" not in manifest["hooks"]
 
@@ -93,8 +93,16 @@ def test_embedded_ui_converts_date_filters_to_epoch_milliseconds():
     assert 'endTime: elements["search-end"].value' not in app_source
 
 
+def test_embedded_ui_disables_summary_only_sessions():
+    app_source = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
+    assert 'from "./session-model.mjs"' in app_source
+    assert "button.disabled = !historyAvailable" in app_source
+    assert 'availability.textContent = "仅摘要"' in app_source
+
+
 def test_release_pipeline_uses_authenticated_remote_verification():
     pipeline = (ROOT / "Jenkinsfile.wechat-release").read_text(encoding="utf-8")
+    assert "node --test tests/*.test.mjs" in pipeline
     assert 'git rev-parse refs/remotes/origin/main' in pipeline
     assert 'published_refs="$(git ls-remote "$remote"' in pipeline
     assert pipeline.count("git ls-remote") == 3
