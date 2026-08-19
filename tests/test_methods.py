@@ -4,6 +4,7 @@ import unittest
 import urllib.error
 import urllib.request
 
+from wechat_bridge_collector.app import retry_delay
 from wechat_bridge_collector.autostart import start_command
 from wechat_bridge_collector.config import CollectorConfig
 from wechat_bridge_collector.query_server import (
@@ -25,6 +26,12 @@ class ConnectorLifecycleTest(unittest.TestCase):
         self.assertEqual(command["type"], "shell_command")
         self.assertEqual(command["command"], [sys.executable, "-m", "wechat_bridge_collector", "start"])
         self.assertEqual(command["timeoutSecs"], 20)
+
+    def test_snapshot_retry_uses_bounded_exponential_backoff(self):
+        self.assertEqual(retry_delay(2.0, 1), 2.0)
+        self.assertEqual(retry_delay(2.0, 2), 4.0)
+        self.assertEqual(retry_delay(2.0, 6), 60.0)
+        self.assertEqual(retry_delay(2.0, 20), 60.0)
 
 
 class QueryServerTest(unittest.TestCase):

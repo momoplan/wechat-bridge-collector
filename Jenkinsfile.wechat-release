@@ -10,7 +10,7 @@ pipeline {
     parameters {
         string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
         string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
-        string(name: 'CONNECTOR_VERSION', defaultValue: '2.0.3', description: 'WeChat Connector version')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '2.0.4', description: 'WeChat Connector version')
         string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.1.117', description: 'Minimum compatible Bridge Agent version')
         booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing Git refs')
     }
@@ -36,6 +36,7 @@ test "$(sed -n 's/^version = "\\([^"]*\\)"/\\1/p' pyproject.toml | head -1)" = "
 test "$(sed -n 's/^__version__ = "\\([^"]*\\)"/\\1/p' wechat_bridge_collector/__init__.py)" = "$CONNECTOR_VERSION"
 test "$(sed -n 's/^version = "\\([^\"]*\\)"/\\1/p' Cargo.toml | head -1)" = "$CONNECTOR_VERSION"
 test ! -e .gitmodules
+test ! -e bin/macos-x86_64/wechat-bridge-collector
 test -f vendor/wechat-decrypt.upstream.json
 test "$(jq -r '.commit' vendor/wechat-decrypt.upstream.json)" = "5e0eaa33fa1e77e533392db394644216c5ea6824"
 test -f vendor/wechat-decrypt/key_utils.py

@@ -2,6 +2,7 @@ import hashlib
 import sqlite3
 from pathlib import Path
 
+from wechat_bridge_collector.state import CollectorState
 from wechat_bridge_collector.wechat_source import WeChatSource
 
 
@@ -88,3 +89,31 @@ def test_history_availability_is_generic_for_unknown_session_ids(tmp_path: Path)
     assert source._usernames_with_message_tables(
         ["readable@chatroom", "future-system-container"]
     ) == {"readable@chatroom"}
+
+
+def test_unchanged_session_poll_never_opens_message_database(tmp_path: Path):
+    session_db = tmp_path / "session.db"
+    message_db = tmp_path / "message.db"
+    write_session_db(session_db)
+    write_message_db(message_db)
+
+    class TrackingCache(StaticCache):
+        def __init__(self, paths):
+            super().__init__(paths)
+            self.accessed = []
+
+        def get(self, rel_key):
+            self.accessed.append(rel_key)
+            return super().get(rel_key)
+
+    source = create_source(session_db, message_db)
+    source.cache = TrackingCache(source.cache.paths)
+    source._session_state_cache = None
+    state = CollectorState()
+    state.sessions = {"readable@chatroom": 20, "brandsessionholder": 10}
+
+    current, changed = source.changed_usernames(state)
+
+    assert current == state.sessions
+    assert changed == []
+    assert source.cache.accessed == ["session/session.db"]

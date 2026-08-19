@@ -106,6 +106,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     state = CollectorState.load(cfg.state_path)
     first_start = not cfg.state_path.exists()
     delivery_failure_count = 0
+    snapshot_failure_count = 0
 
     try:
         print(
@@ -167,6 +168,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 if not failed:
                     state.sessions = current_sessions
                     delivery_failure_count = 0
+                    snapshot_failure_count = 0
                 state.save(cfg.state_path)
 
                 if args.once:
@@ -181,16 +183,29 @@ def cmd_run(args: argparse.Namespace) -> int:
                     )
                 time.sleep(delay)
             except DatabaseSnapshotError as exc:
-                print(f"snapshot failed: {exc}; state session markers were not advanced", file=sys.stderr)
+                snapshot_failure_count += 1
+                delay = retry_delay(cfg.poll_interval_secs, snapshot_failure_count)
+                print(
+                    f"snapshot failed: {exc}; state session markers were not advanced; "
+                    f"retrying in {delay:.1f}s",
+                    file=sys.stderr,
+                )
                 state.save(cfg.state_path)
                 if args.once:
                     return 1
-                time.sleep(cfg.poll_interval_secs)
+                time.sleep(delay)
             except KeyboardInterrupt:
                 print("collector stopped")
                 return 0
     finally:
         method_server.stop()
+
+
+def retry_delay(poll_interval_secs: float, failure_count: int) -> float:
+    return max(
+        poll_interval_secs,
+        min(60.0, max(2.0, poll_interval_secs) * (2 ** min(max(failure_count, 1) - 1, 5))),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

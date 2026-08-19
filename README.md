@@ -2,7 +2,7 @@
 
 跨平台微信本地消息采集器和只读查询应用。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 的 key 提取能力，然后把新消息作为设备上的本地应用事件交给 Bridge Agent；查询方法由 `connector.json` 直接声明。
 
-从 `0.4.0` 起官方 Connector 固定使用 Python 入口 `wechat-bridge-collector-python`。仓库中保留的 Rust 实验代码和旧二进制不参与 Connector 启动解析，也不是官方 Connector 运行路径。
+从 `0.4.0` 起官方 Connector 固定使用 Python 入口 `wechat-bridge-collector-python`。仓库中保留的 Rust 实验代码不参与 Connector 启动解析；从 `2.0.4` 起，未签名且不参与运行的旧预编译二进制不再进入源码归档。
 
 从 `0.6.0` 起 Connector 在百积木应用详情中提供完整的首次运行引导：无密钥时服务仍会启动，用户可在界面中自动获取、导入已有 `all_keys.json` 或重新检测，成功后无需重启即可浏览最近会话、联系人和聊天记录。界面只通过清单声明的 management operation 调用本机服务；所有 `/management/v1/*` 请求都要求 Bridge Agent 管理的私有 Connector token。
 
@@ -15,6 +15,8 @@
 从 `2.0.2` 起，本地应用界面的日期筛选也严格遵循该契约：开始日期转换为本地时区当天零点的 Unix epoch 毫秒，结束日期转换为次日零点减 1 毫秒；未填写的边界不会发送给查询接口。
 
 从 `2.0.3` 起，`getRecentSessions` 会依据实际微信消息表返回 `historyAvailable`。没有独立消息表的微信系统聚合会话仍保留最近摘要，但本地应用不会再把它当作可读取聊天记录的普通会话。
+
+从 `2.0.4` 起，采集器只在 `session.db` 出现新的会话时间戳时读取对应消息库；消息库快照按 SQLite WAL 的校验和与提交边界增量更新。完整 `quick_check` 只在首次建立或主库换代后的重建阶段执行，快照失败使用有上限的指数退避，并发查询与采集由每库锁串行化。
 
 macOS 上由签名后的百积木桌面应用作为权限宿主启动 Python 子进程。Connector 不再安装或加载 LaunchAgent；这是为了让微信沙盒数据库的访问权限稳定归属到“百积木”，而不是归属到一个无稳定签名身份的独立 Python/launchd 进程。
 
