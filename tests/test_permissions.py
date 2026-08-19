@@ -27,9 +27,25 @@ def test_source_access_accepts_readable_database_directory(tmp_path: Path):
 
 def test_source_access_reports_full_disk_access_guidance(tmp_path: Path):
     source = _source(tmp_path)
-    with patch("wechat_bridge_collector.wechat_source.os.scandir", side_effect=PermissionError):
+    original_stat = Path.stat
+
+    def protected_stat(path: Path, *args, **kwargs):
+        if path == tmp_path:
+            raise PermissionError
+        return original_stat(path, *args, **kwargs)
+
+    with patch.object(Path, "stat", protected_stat):
         with pytest.raises(RuntimeError, match="完全磁盘访问"):
             source.assert_source_access()
+
+
+def test_source_access_does_not_enumerate_protected_root(tmp_path: Path):
+    contact_dir = tmp_path / "contact"
+    contact_dir.mkdir()
+    (contact_dir / "contact.db").write_bytes(b"database")
+
+    with patch("wechat_bridge_collector.wechat_source.os.scandir", side_effect=AssertionError):
+        _source(tmp_path).assert_source_access()
 
 
 def test_source_access_reports_protected_database_file(tmp_path: Path):

@@ -1436,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "wechat-bridge-collector"
-version = "2.0.4"
+version = "2.0.5"
 dependencies = [
  "aes",
  "cbc",

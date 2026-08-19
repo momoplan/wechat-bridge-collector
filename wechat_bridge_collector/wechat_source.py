@@ -516,8 +516,6 @@ class WeChatSource:
             db_dir.stat()
             if not db_dir.is_dir():
                 raise RuntimeError(f"WeChat database directory does not exist: {db_dir}")
-            with os.scandir(db_dir) as entries:
-                next(entries, None)
             candidates = [
                 os.path.join("contact", "contact.db"),
                 os.path.join("session", "session.db"),
