@@ -10,7 +10,7 @@ pipeline {
     parameters {
         string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
         string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
-        string(name: 'CONNECTOR_VERSION', defaultValue: '3.0.0', description: 'WeChat Connector version')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '3.0.1', description: 'WeChat Connector version')
         string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.6.0', description: 'Minimum compatible Bridge Agent version')
         booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing Git refs')
     }
@@ -167,24 +167,26 @@ verify_zip_archive() {
   curl -fL --retry 5 --retry-all-errors --connect-timeout 10 --max-time 120 \
     "$archive_url" -o "$archive_path"
   sha256sum "$archive_path"
-  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/key_utils[.]py$'
-  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys[.]py$'
-  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys_windows[.]py$'
-  unzip -Z1 "$archive_path" | grep -Eq '/vendor/wechat-decrypt/find_all_keys_macos[.]c$'
-  unzip -Z1 "$archive_path" | grep -Eq '/ui/time-range[.]mjs$'
-  unzip -Z1 "$archive_path" | grep -Eq '/ui/session-model[.]mjs$'
+  archive_listing="$(unzip -Z1 "$archive_path")"
+  grep -Eq '/vendor/wechat-decrypt/key_utils[.]py$' <<<"$archive_listing"
+  grep -Eq '/vendor/wechat-decrypt/find_all_keys[.]py$' <<<"$archive_listing"
+  grep -Eq '/vendor/wechat-decrypt/find_all_keys_windows[.]py$' <<<"$archive_listing"
+  grep -Eq '/vendor/wechat-decrypt/find_all_keys_macos[.]c$' <<<"$archive_listing"
+  grep -Eq '/ui/time-range[.]mjs$' <<<"$archive_listing"
+  grep -Eq '/ui/session-model[.]mjs$' <<<"$archive_listing"
   unzip -p "$archive_path" '*/connector.json' | jq -e --arg version "$CONNECTOR_VERSION" \
     '.version == $version and .source.revision == ("v" + $version)' >/dev/null
 }
 
 source_archive="$release_verify_dir/source.tar"
 git archive --format=tar "$SOURCE_COMMIT" > "$source_archive"
-tar -tf "$source_archive" | grep -Eq '^vendor/wechat-decrypt/key_utils[.]py$'
-tar -tf "$source_archive" | grep -Eq '^vendor/wechat-decrypt/find_all_keys[.]py$'
-tar -tf "$source_archive" | grep -Eq '^vendor/wechat-decrypt/find_all_keys_windows[.]py$'
-tar -tf "$source_archive" | grep -Eq '^vendor/wechat-decrypt/find_all_keys_macos[.]c$'
-tar -tf "$source_archive" | grep -Eq '^ui/time-range[.]mjs$'
-tar -tf "$source_archive" | grep -Eq '^ui/session-model[.]mjs$'
+source_listing="$(tar -tf "$source_archive")"
+grep -Eq '^vendor/wechat-decrypt/key_utils[.]py$' <<<"$source_listing"
+grep -Eq '^vendor/wechat-decrypt/find_all_keys[.]py$' <<<"$source_listing"
+grep -Eq '^vendor/wechat-decrypt/find_all_keys_windows[.]py$' <<<"$source_listing"
+grep -Eq '^vendor/wechat-decrypt/find_all_keys_macos[.]c$' <<<"$source_listing"
+grep -Eq '^ui/time-range[.]mjs$' <<<"$source_listing"
+grep -Eq '^ui/session-model[.]mjs$' <<<"$source_listing"
 tar -xOf "$source_archive" connector.json | jq -e --arg version "$CONNECTOR_VERSION" \
   '.version == $version and .source.revision == ("v" + $version)' >/dev/null
 

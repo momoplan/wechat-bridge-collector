@@ -44,7 +44,7 @@ collector 不直接连接 relay，也不修改微信数据。
 
 ```bash
 baijimu local-app install \
-  'https://github.com/momoplan/wechat-bridge-collector.git#v3.0.0' \
+  'https://github.com/momoplan/wechat-bridge-collector.git#v3.0.1' \
   --replace
 ```
 
