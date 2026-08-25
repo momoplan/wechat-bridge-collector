@@ -36,8 +36,8 @@ const WAL_FRAME_HEADER_SZ: usize = 24;
 struct CollectorConfig {
     #[serde(default = "default_bridge_base_url")]
     bridge_base_url: String,
-    #[serde(default = "default_connector_id")]
-    connector_id: String,
+    #[serde(skip, default = "resolve_app_id")]
+    app_id: String,
     #[serde(default = "default_event_name")]
     event_name: String,
     #[serde(default = "default_poll_interval")]
@@ -50,7 +50,7 @@ struct CollectorConfig {
     method_host: String,
     #[serde(default = "default_method_port")]
     method_port: u16,
-    #[serde(default)]
+    #[serde(skip, default)]
     bridge_event_token: Option<String>,
     #[serde(default)]
     wechat_decrypt_dir: Option<String>,
@@ -72,7 +72,7 @@ impl Default for CollectorConfig {
     fn default() -> Self {
         Self {
             bridge_base_url: default_bridge_base_url(),
-            connector_id: default_connector_id(),
+            app_id: resolve_app_id(),
             event_name: default_event_name(),
             poll_interval_secs: default_poll_interval(),
             batch_size: default_batch_size(),
@@ -103,7 +103,8 @@ impl CollectorConfig {
             Self::default()
         };
 
-        if let Ok(path) = env::var("BAIJIMU_CONNECTOR_EVENT_TOKEN_FILE") {
+        cfg.app_id = resolve_app_id();
+        if let Ok(path) = env::var("BAIJIMU_LOCAL_APP_EVENT_TOKEN_FILE") {
             if let Ok(value) = fs::read_to_string(path) {
                 let value = value.trim();
                 if !value.is_empty() {
@@ -154,7 +155,7 @@ impl CollectorConfig {
     }
 
     fn bridge_events_url(&self) -> String {
-        env::var("BAIJIMU_CONNECTOR_EVENT_ENDPOINT").unwrap_or_else(|_| {
+        env::var("BAIJIMU_LOCAL_APP_EVENT_ENDPOINT").unwrap_or_else(|_| {
             format!(
                 "{}/v1/local-app-events",
                 self.bridge_base_url.trim_end_matches('/')
@@ -1497,7 +1498,8 @@ fn run_loop(mut cfg: CollectorConfig, parsed: &ParsedArgs) -> Result<(), String>
         }
     }
     println!(
-        "collector running localApp=com.baijimu.connector.wechat.{} bridge={} methods={} state={}",
+        "collector running localApp={}.{} bridge={} methods={} state={}",
+        cfg.app_id,
         cfg.event_name,
         cfg.bridge_events_url(),
         server.base_url,
@@ -1750,7 +1752,7 @@ impl BridgeClient {
         occurred_at: Option<&str>,
     ) -> BridgeResponse {
         let mut request = json!({
-            "connectorId": self.config.connector_id,
+            "appId": self.config.app_id,
             "event": self.config.event_name,
             "eventId": event_id,
             "payload": payload,
@@ -2665,7 +2667,12 @@ fn home_dir() -> PathBuf {
 }
 
 fn default_state_dir() -> PathBuf {
-    home_dir().join(".wechat-bridge-collector")
+    env::var("BAIJIMU_LOCAL_APP_DATA_DIR")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".wechat-bridge-collector"))
 }
 fn default_state_dir_string() -> String {
     default_state_dir().display().to_string()
@@ -2673,8 +2680,19 @@ fn default_state_dir_string() -> String {
 fn default_bridge_base_url() -> String {
     DEFAULT_BRIDGE_BASE_URL.to_string()
 }
-fn default_connector_id() -> String {
-    "com.baijimu.connector.wechat".to_string()
+fn resolve_app_id() -> String {
+    env::var("BAIJIMU_LOCAL_APP_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            serde_json::from_str::<Value>(include_str!("../connector.json"))
+                .ok()
+                .and_then(|manifest| manifest.get("appId")?.as_str().map(str::to_string))
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .expect("BAIJIMU_LOCAL_APP_ID or connector.json appId is required")
 }
 fn default_event_name() -> String {
     "messageReceived".to_string()

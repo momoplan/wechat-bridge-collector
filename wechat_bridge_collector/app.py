@@ -110,7 +110,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     try:
         print(
-            f"collector running localApp={cfg.connector_id}.{cfg.event_name} "
+            f"collector running localApp={cfg.app_id}.{cfg.event_name} "
             f"bridge={cfg.bridge_events_url} methods={method_server.base_url} state={cfg.state_path}"
         )
 

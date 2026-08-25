@@ -10,17 +10,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_connector_manifest_declares_local_app_capabilities():
     manifest = json.loads((ROOT / "connector.json").read_text(encoding="utf-8"))
-    assert manifest["schemaVersion"] == "2.0"
-    assert manifest["id"] == "com.baijimu.connector.wechat"
+    assert manifest["schemaVersion"] == "3.0.0"
+    assert manifest["appId"] == "36d35399-a0cd-11f1-8622-00163e3536cb"
+    assert "id" not in manifest
     assert "serviceRegistrationFiles" not in manifest
     assert "services" not in manifest
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert not (ROOT / "bin" / "macos-x86_64" / "wechat-bridge-collector").exists()
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "2.0.5"
+    assert manifest["version"] == "3.0.0"
     assert manifest["version"] == __version__
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
     assert manifest["runtime"]["command"].endswith("-python")
+    assert manifest["hostRequirements"] == {
+        "minimumVersion": "0.6.0",
+        "capabilities": [],
+    }
+    assert manifest["upgradeReview"] == {
+        "configuration": "declared",
+        "interfaces": "declared",
+        "database": "not_applicable",
+    }
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'requires-python = ">=3.12,<3.13"' in pyproject
     assert (ROOT / "requirements.lock").read_text(encoding="utf-8").splitlines() == [

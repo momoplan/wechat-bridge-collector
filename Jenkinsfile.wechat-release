@@ -10,8 +10,8 @@ pipeline {
     parameters {
         string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
         string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
-        string(name: 'CONNECTOR_VERSION', defaultValue: '2.0.5', description: 'WeChat Connector version')
-        string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.1.117', description: 'Minimum compatible Bridge Agent version')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '3.0.0', description: 'WeChat Connector version')
+        string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.6.0', description: 'Minimum compatible Bridge Agent version')
         booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing Git refs')
     }
 
@@ -27,7 +27,10 @@ test "$(git config --get remote.origin.url)" = "https://gitee.com/zxflimit_admin
 test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_COMMIT"
 test "$(jq -r '.version' connector.json)" = "$CONNECTOR_VERSION"
 test "$(jq -r '.source.revision' connector.json)" = "v${CONNECTOR_VERSION}"
-test "$(jq -r '.schemaVersion' connector.json)" = "2.0"
+test "$(jq -r '.schemaVersion' connector.json)" = "3.0.0"
+test "$(jq -r '.appId' connector.json)" = "36d35399-a0cd-11f1-8622-00163e3536cb"
+test "$(jq -r 'has("id")' connector.json)" = "false"
+test "$(jq -r '.hostRequirements.minimumVersion' connector.json)" = "$MIN_BRIDGE_VERSION"
 test "$(jq -r '.runtime.command' connector.json)" = "wechat-bridge-collector-python"
 test "$(jq -r '.runtime.startPolicy' connector.json)" = "manual"
 test "$(jq -r '.ui.entry' connector.json)" = "ui/index.html"

@@ -3,26 +3,46 @@ from __future__ import annotations
 import json
 import os
 import platform
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 
-DEFAULT_STATE_DIR = Path.home() / ".wechat-bridge-collector"
+LEGACY_STATE_DIR = Path.home() / ".wechat-bridge-collector"
 DEFAULT_BRIDGE_BASE_URL = "http://127.0.0.1:18081"
 DEFAULT_KEYS_FILE_NAME = "all_keys.json"
 DEFAULT_DECRYPTED_DIR_NAME = "decrypted"
+CONNECTOR_MANIFEST_PATH = Path(__file__).resolve().parents[1] / "connector.json"
 PACKAGED_WECHAT_DECRYPT_DIR = Path(__file__).resolve().parents[1] / "vendor" / "wechat-decrypt"
+
+
+def default_state_dir() -> Path:
+    value = os.environ.get("BAIJIMU_LOCAL_APP_DATA_DIR", "").strip()
+    return Path(value).expanduser() if value else LEGACY_STATE_DIR
+
+
+def registered_app_id() -> str:
+    value = os.environ.get("BAIJIMU_LOCAL_APP_ID", "").strip()
+    if value:
+        return value
+    try:
+        value = str(
+            json.loads(CONNECTOR_MANIFEST_PATH.read_text(encoding="utf-8"))["appId"]
+        ).strip()
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("无法从宿主环境或 connector.json 解析本地应用 appId") from exc
+    if not value:
+        raise RuntimeError("connector.json appId 不能为空")
+    return value
 
 
 @dataclass
 class CollectorConfig:
     bridge_base_url: str = DEFAULT_BRIDGE_BASE_URL
-    connector_id: str = "com.baijimu.connector.wechat"
     event_name: str = "messageReceived"
     poll_interval_secs: float = 2.0
     batch_size: int = 200
-    state_dir: str = str(DEFAULT_STATE_DIR)
+    state_dir: str = field(default_factory=lambda: str(default_state_dir()))
     method_host: str = "127.0.0.1"
     method_port: int = 18082
     bridge_event_token: str | None = None
@@ -33,6 +53,10 @@ class CollectorConfig:
     decrypted_dir: str | None = None
     include_text: bool = True
     include_outgoing: bool = True
+
+    @property
+    def app_id(self) -> str:
+        return registered_app_id()
 
     @property
     def state_path(self) -> Path:
@@ -53,7 +77,7 @@ class CollectorConfig:
     @property
     def bridge_events_url(self) -> str:
         return os.environ.get(
-            "BAIJIMU_CONNECTOR_EVENT_ENDPOINT",
+            "BAIJIMU_LOCAL_APP_EVENT_ENDPOINT",
             self.bridge_base_url.rstrip("/") + "/v1/local-app-events",
         )
 
@@ -63,16 +87,29 @@ class CollectorConfig:
 
     @classmethod
     def load(cls, path: str | os.PathLike[str] | None = None) -> "CollectorConfig":
+        explicit_path = path is not None
         if path is None:
-            path = DEFAULT_STATE_DIR / "config.json"
+            path = default_state_dir() / "config.json"
         path = Path(path).expanduser()
-        if not path.exists():
+        source_path = path
+        legacy_config_path = LEGACY_STATE_DIR / "config.json"
+        if (
+            not explicit_path
+            and not source_path.exists()
+            and source_path != legacy_config_path
+            and legacy_config_path.is_file()
+        ):
+            source_path = legacy_config_path
+        if not source_path.exists():
             cfg = cls()
         else:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw = json.loads(source_path.read_text(encoding="utf-8"))
             cfg = cls(**{k: v for k, v in raw.items() if k in cls.__dataclass_fields__})
 
-        if token_file := os.environ.get("BAIJIMU_CONNECTOR_EVENT_TOKEN_FILE"):
+        if not explicit_path:
+            cfg.state_dir = str(default_state_dir())
+
+        if token_file := os.environ.get("BAIJIMU_LOCAL_APP_EVENT_TOKEN_FILE"):
             try:
                 cfg.bridge_event_token = Path(token_file).read_text(encoding="utf-8").strip()
             except OSError:
@@ -80,6 +117,8 @@ class CollectorConfig:
         cfg.wechat_decrypt_dir = (
             os.environ.get("WECHAT_DECRYPT_DIR") or cfg.wechat_decrypt_dir
         )
+        if source_path != path:
+            cfg.save(path)
         return cfg
 
     def resolved_wechat_decrypt_dir(self) -> Path:
@@ -144,6 +183,7 @@ class CollectorConfig:
         path = Path(path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
         data: dict[str, Any] = asdict(self)
+        data.pop("bridge_event_token", None)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return path
 

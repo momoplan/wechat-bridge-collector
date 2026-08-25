@@ -113,8 +113,11 @@ class SourceRuntimeTest(unittest.TestCase):
             state_dir.mkdir()
             legacy = state_dir / "all_keys.json"
             legacy.write_text(json.dumps({"message/message_0.db": {"enc_key": "a" * 64}}))
-            with patch.dict(os.environ, {"BAIJIMU_CONNECTOR_DATA_DIR": str(private_dir)}):
-                runtime = SourceRuntime(CollectorConfig(state_dir=str(state_dir)), source_factory=FakeSource)
+            with (
+                patch.dict(os.environ, {"BAIJIMU_LOCAL_APP_DATA_DIR": str(private_dir)}),
+                patch("wechat_bridge_collector.source_runtime.LEGACY_STATE_DIR", state_dir),
+            ):
+                runtime = SourceRuntime(CollectorConfig(state_dir=str(private_dir)), source_factory=FakeSource)
             self.assertEqual(runtime.keys_path, private_dir / "all_keys.json")
             self.assertEqual(json.loads(runtime.keys_path.read_text()), json.loads(legacy.read_text()))
             if os.name != "nt":

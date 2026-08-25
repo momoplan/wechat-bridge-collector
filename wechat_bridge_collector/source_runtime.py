@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import CollectorConfig
+from .config import LEGACY_STATE_DIR, CollectorConfig
 from .setup_keys import setup_collector
 from .wechat_source import WeChatSource
 
@@ -27,19 +27,31 @@ class SourceRuntime:
         source_factory: Callable[[CollectorConfig], WeChatSource] = WeChatSource,
         setup: Callable[..., dict[str, str]] = setup_collector,
     ):
-        legacy_path = config.default_keys_path
-        private_dir = os.environ.get("BAIJIMU_CONNECTOR_DATA_DIR", "").strip()
+        legacy_path = LEGACY_STATE_DIR / "all_keys.json"
+        private_dir = os.environ.get("BAIJIMU_LOCAL_APP_DATA_DIR", "").strip()
+        configured_state_dir = Path(config.state_dir).expanduser()
+        private_path = Path(private_dir).expanduser() if private_dir else None
+        host_owns_state = private_path is not None and configured_state_dir in {
+            LEGACY_STATE_DIR,
+            private_path,
+        }
         configured_path = Path(config.keys_file).expanduser() if config.keys_file else None
-        if private_dir and (configured_path is None or configured_path == legacy_path):
-            private_path = Path(private_dir).expanduser() / "all_keys.json"
+        if host_owns_state and (configured_path is None or configured_path == legacy_path):
+            private_keys_path = private_path / "all_keys.json"
             try:
-                if not private_path.is_file() and legacy_path.is_file():
-                    _atomic_write_private_bytes(private_path, legacy_path.read_bytes())
-                config.keys_file = str(private_path)
+                if not private_keys_path.is_file() and legacy_path.is_file():
+                    _atomic_write_private_bytes(private_keys_path, legacy_path.read_bytes())
+                config.keys_file = str(private_keys_path)
                 config.save()
             except OSError:
-                config.keys_file = str(legacy_path) if legacy_path.is_file() else str(private_path)
-        elif not config.keys_file and legacy_path.is_file():
+                config.keys_file = (
+                    str(legacy_path) if legacy_path.is_file() else str(private_keys_path)
+                )
+        elif (
+            configured_state_dir == LEGACY_STATE_DIR
+            and not config.keys_file
+            and legacy_path.is_file()
+        ):
             config.keys_file = str(legacy_path)
         self.config = config
         self._source_factory = source_factory

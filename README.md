@@ -20,6 +20,8 @@
 
 从 `2.0.5` 起，启动权限探测不再枚举受 macOS 隐私保护的微信 `db_storage` 根目录，而是只校验配置中已知的数据库文件并尝试建立只读解密快照，避免系统目录打开调用长期阻塞 Connector 初始化。
 
+从 `3.0.0` 起，Connector 迁移到 Bridge Agent `3.0.0` 本地应用协议：应用身份改由平台注册的 `appId` 和宿主环境提供，事件请求使用 `appId`，私有数据、管理凭证和事件凭证统一使用 `BAIJIMU_LOCAL_APP_*` 契约。本版本要求 Bridge Agent `0.6.0` 或更高版本，不兼容旧宿主协议。
+
 macOS 上由签名后的百积木桌面应用作为权限宿主启动 Python 子进程。Connector 不再安装或加载 LaunchAgent；这是为了让微信沙盒数据库的访问权限稳定归属到“百积木”，而不是归属到一个无稳定签名身份的独立 Python/launchd 进程。
 
 ## 架构
@@ -41,11 +43,15 @@ collector 不直接连接 relay，也不修改微信数据。
 推荐通过百积木 Local 安装本仓库提供的 Connector，而不是让 AI skill 逐条执行安装命令。
 
 ```bash
-bridge-agent connector install /path/to/wechat-bridge-collector --replace
+baijimu local-app install \
+  'https://github.com/momoplan/wechat-bridge-collector.git#v3.0.0' \
+  --replace
 ```
 
-安装器读取 `schemaVersion: "2.0"` 的 `connector.json`，以
-`connectorId=com.baijimu.connector.wechat` 创建一个本地应用。methods、events、
+该版本以个人工作区登记的 DRAFT 版本进行开发分发，不提交公开市场审核。安装时客户端会提示“注册不等于公开审核”，并向平台注册中心校验 appId、版本、revision 和 SHA-256。
+
+安装器读取 `schemaVersion: "3.0.0"` 的 `connector.json`，以
+`appId=36d35399-a0cd-11f1-8622-00163e3536cb` 创建一个本地应用。methods、events、
 healthCheck 和启停命令都直接属于这个应用，不创建 runtime service，也不生成
 businessId。安装后按下面顺序操作：
 
@@ -55,7 +61,7 @@ businessId。安装后按下面顺序操作：
 - 从百积木应用详情页手动启动 Connector
 - `GET http://127.0.0.1:18082/health`
 
-当前 README 保留下面的手工命令，主要用于调试、诊断和 legacy fallback。
+当前 README 保留下面的手工命令，主要用于调试和诊断。
 
 ## 前置条件
 
@@ -74,7 +80,7 @@ cd wechat-bridge-collector
 wechat-bridge-collector setup
 ```
 
-collector 默认只读写自己的目录：
+由 Bridge Agent 启动时，collector 只读写宿主通过 `BAIJIMU_LOCAL_APP_DATA_DIR` 分配的应用私有目录。独立调试时默认目录为：
 
 ```text
 ~/.wechat-bridge-collector/config.json
@@ -110,8 +116,8 @@ export WECHAT_DECRYPT_DIR=/path/to/wechat-decrypt
 `--keys-file` 仍可用于高级场景，但默认不会读取其它工具的目录。
 
 由 Bridge Agent 启动时，collector 通过
-`BAIJIMU_CONNECTOR_EVENT_TOKEN_FILE` 获得该 Connector 独立的事件发布凭证，通过
-`BAIJIMU_CONNECTOR_EVENT_ENDPOINT` 获得事件入口。调试时也可以使用
+`BAIJIMU_LOCAL_APP_EVENT_TOKEN_FILE` 获得该应用独立的事件发布凭证，通过
+`BAIJIMU_LOCAL_APP_EVENT_ENDPOINT` 获得事件入口，通过 `BAIJIMU_LOCAL_APP_ID` 获得平台注册身份，并从 `BAIJIMU_LOCAL_APP_TOKEN_FILE` 读取管理凭证。调试时也可以使用
 `--event-token` 显式提供凭证。
 
 启动采集器：
@@ -158,7 +164,7 @@ Connector 的 `runtime.startPolicy` 是 `manual`。Bridge Agent 构建运行时�
 
 默认本地应用和事件名：
 
-- connectorId: `com.baijimu.connector.wechat`
+- appId: `36d35399-a0cd-11f1-8622-00163e3536cb`
 - event: `messageReceived`
 
 payload 示例：

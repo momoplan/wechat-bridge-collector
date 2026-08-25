@@ -269,7 +269,17 @@ def management_error(code: str, message: str) -> dict[str, Any]:
 
 
 def load_or_create_management_token() -> str:
-    data_dir_value = os.environ.get("BAIJIMU_CONNECTOR_DATA_DIR", "").strip()
+    token_file_value = os.environ.get("BAIJIMU_LOCAL_APP_TOKEN_FILE", "").strip()
+    if token_file_value:
+        try:
+            token = Path(token_file_value).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError("无法读取宿主提供的本地应用管理凭证") from exc
+        if len(token) < 32:
+            raise RuntimeError("宿主提供的本地应用管理凭证无效")
+        return token
+
+    data_dir_value = os.environ.get("BAIJIMU_LOCAL_APP_DATA_DIR", "").strip()
     if not data_dir_value:
         return secrets.token_hex(32)
     data_dir = Path(data_dir_value).expanduser()
@@ -317,7 +327,7 @@ def runtime_state(
     return {
         "product": "微信",
         "version": __version__,
-        "connectorId": config.connector_id,
+        "appId": config.app_id,
         "includeText": config.include_text,
         "includeOutgoing": config.include_outgoing,
         "sourceAccess": source_access,

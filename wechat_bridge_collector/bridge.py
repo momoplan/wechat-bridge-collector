@@ -271,7 +271,7 @@ class BridgeClient:
 
     def emit_message(self, payload: dict[str, Any], event_id: str, occurred_at: str | None) -> BridgeResponse:
         request = {
-            "connectorId": self.config.connector_id,
+            "appId": self.config.app_id,
             "event": self.config.event_name,
             "eventId": event_id,
             "payload": payload,

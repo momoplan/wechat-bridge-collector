@@ -1,17 +1,17 @@
 {
-  "schemaVersion": "2.0",
-  "id": "com.baijimu.connector.wechat",
+  "schemaVersion": "3.0.0",
+  "appId": "36d35399-a0cd-11f1-8622-00163e3536cb",
   "name": "WeChat Connector",
-  "version": "2.0.5",
+  "version": "3.0.0",
   "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
   "publisher": {
     "name": "Baijimu",
     "homepage": "https://baijimu.com"
   },
   "source": {
-    "type": "github",
-    "repo": "momoplan/wechat-bridge-collector",
-    "revision": "v2.0.5"
+    "type": "git",
+    "repo": "https://github.com/momoplan/wechat-bridge-collector.git",
+    "revision": "v3.0.0"
   },
   "runtime": {
     "type": "process",
@@ -29,6 +29,10 @@
     "stopArgs": [
       "stop"
     ]
+  },
+  "hostRequirements": {
+    "minimumVersion": "0.6.0",
+    "capabilities": []
   },
   "permissions": [
     {
@@ -113,6 +117,11 @@
       }
     },
     "additionalProperties": false
+  },
+  "upgradeReview": {
+    "configuration": "declared",
+    "interfaces": "declared",
+    "database": "not_applicable"
   },
   "remoteCapabilities": [
     {

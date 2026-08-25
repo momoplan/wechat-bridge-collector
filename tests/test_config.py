@@ -16,7 +16,7 @@ class CollectorConfigTest(unittest.TestCase):
             with patch.dict(
                 "os.environ",
                 {
-                    "BAIJIMU_CONNECTOR_EVENT_TOKEN_FILE": str(token_file),
+                    "BAIJIMU_LOCAL_APP_EVENT_TOKEN_FILE": str(token_file),
                 },
                 clear=False,
             ):
@@ -27,13 +27,35 @@ class CollectorConfigTest(unittest.TestCase):
     def test_save_writes_config_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "collector.json"
-            cfg = CollectorConfig(connector_id="com.example.wechat")
+            cfg = CollectorConfig(bridge_event_token="runtime-secret")
             written = cfg.save(path)
 
             self.assertEqual(written, path)
             saved = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(saved["connector_id"], "com.example.wechat")
+            self.assertNotIn("connector_id", saved)
+            self.assertNotIn("app_id", saved)
+            self.assertNotIn("bridge_event_token", saved)
             self.assertNotIn("service_name", saved)
+
+    def test_host_supplies_app_identity_and_private_data_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch(
+                    "wechat_bridge_collector.config.LEGACY_STATE_DIR",
+                    Path(tmp) / "legacy",
+                ),
+                patch.dict(
+                    "os.environ",
+                    {
+                        "BAIJIMU_LOCAL_APP_ID": "registered-app-id",
+                        "BAIJIMU_LOCAL_APP_DATA_DIR": tmp,
+                    },
+                    clear=False,
+                ),
+            ):
+                cfg = CollectorConfig.load()
+                self.assertEqual(cfg.app_id, "registered-app-id")
+                self.assertEqual(cfg.state_dir, tmp)
 
     def test_default_runtime_uses_collector_owned_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
