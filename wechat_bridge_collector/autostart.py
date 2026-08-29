@@ -4,13 +4,13 @@ import json
 import os
 import platform
 import signal
-import shutil
 import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
-from importlib import resources
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 from .config import CollectorConfig
 
@@ -52,33 +52,7 @@ def install_autostart(config: CollectorConfig) -> AutostartResult:
 def start_collector(config: CollectorConfig) -> AutostartResult:
     system = platform.system().lower()
     if system == "windows":
-        launcher = _write_windows_launcher(config)
-        completed = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(launcher),
-                "-Config",
-                str(config.config_path),
-                "-HealthUrl",
-                config.method_base_url + "/health",
-            ],
-            text=True,
-            capture_output=True,
-            timeout=30,
-        )
-        if completed.returncode != 0:
-            raise RuntimeError(_format_process_error(completed))
-        return AutostartResult(
-            status="started",
-            platform=system,
-            launcher_path=str(launcher),
-            health_url=config.method_base_url + "/health",
-            message=completed.stdout.strip() or None,
-        )
+        return _start_background_process(config, system)
     if system == "darwin":
         return _start_macos(config)
     raise RuntimeError(f"start is not supported on {platform.system()}")
@@ -112,20 +86,30 @@ def stop_collector(config: CollectorConfig) -> AutostartResult:
             message="removed stale collector pid file",
         )
 
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    deadline = time.monotonic() + 8
-    while _process_running(pid) and time.monotonic() < deadline:
+    if system == "windows":
+        _terminate_windows_process_tree(pid)
+    else:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + 8
+        while _process_running(pid) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if _process_running(pid):
+            os.kill(pid, signal.SIGKILL)
+
+    health_url = config.method_base_url + "/health"
+    deadline = time.monotonic() + 4
+    while _health_ok(health_url) and time.monotonic() < deadline:
         time.sleep(0.1)
-    if _process_running(pid):
-        os.kill(pid, signal.SIGKILL)
+    if _health_ok(health_url):
+        raise RuntimeError(f"collector health endpoint remains available after stop: {health_url}")
     pid_path.unlink(missing_ok=True)
     return AutostartResult(
         status="stopped",
         platform=system,
-        health_url=config.method_base_url + "/health",
+        health_url=health_url,
     )
 
 
@@ -140,45 +124,27 @@ def status(config: CollectorConfig) -> AutostartResult:
     )
 
 
-def _install_windows_autostart(config: CollectorConfig) -> AutostartResult:
-    launcher = _write_windows_launcher(config)
-    startup_dir = (
-        Path(os.environ.get("APPDATA", str(Path.home() / "AppData/Roaming")))
-        / "Microsoft"
-        / "Windows"
-        / "Start Menu"
-        / "Programs"
-        / "Startup"
-    )
-    startup_dir.mkdir(parents=True, exist_ok=True)
-    startup_cmd = startup_dir / "BaijimuWeChatCollector.cmd"
-    startup_cmd.write_text(
-        "@echo off\r\n"
-        f"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{launcher}\" "
-        f"-Config \"{config.config_path}\" -HealthUrl \"{config.method_base_url}/health\"\r\n",
-        encoding="ascii",
-    )
-    return AutostartResult(
-        status="installed",
-        platform="windows",
-        launcher_path=str(launcher),
-        autostart_path=str(startup_cmd),
-        health_url=config.method_base_url + "/health",
-    )
-
-
 def _start_macos(config: CollectorConfig) -> AutostartResult:
     _remove_legacy_macos_autostart()
+    return _start_background_process(config, "darwin")
+
+
+def _start_background_process(config: CollectorConfig, system: str) -> AutostartResult:
     if _health_ok(config.method_base_url + "/health"):
         return AutostartResult(
             status="running",
-            platform="darwin",
+            platform=system,
             health_url=config.method_base_url + "/health",
             message="collector is already healthy",
         )
 
-    stdout_path = Path(config.state_dir).expanduser() / "collector.log"
-    stderr_path = Path(config.state_dir).expanduser() / "collector.err.log"
+    state_dir = Path(config.state_dir).expanduser()
+    if system == "windows":
+        stdout_path = state_dir / "logs" / "collector.out.log"
+        stderr_path = state_dir / "logs" / "collector.err.log"
+    else:
+        stdout_path = state_dir / "collector.log"
+        stderr_path = state_dir / "collector.err.log"
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
     _rotate_log(stdout_path)
     _rotate_log(stderr_path)
@@ -190,25 +156,37 @@ def _start_macos(config: CollectorConfig) -> AutostartResult:
     env["PYTHONPATH"] = os.pathsep.join(
         part for part in (str(_package_root()), existing_pythonpath) if part
     )
-    process = subprocess.Popen(
-        args,
-        stdout=stdout,
-        stderr=stderr,
-        env=env,
-        start_new_session=True,
-        close_fds=True,
-    )
-    stdout.close()
-    stderr.close()
+    process_options: dict[str, object] = {
+        "stdout": stdout,
+        "stderr": stderr,
+        "env": env,
+        "close_fds": True,
+    }
+    if system == "windows":
+        process_options["creationflags"] = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        )
+    else:
+        process_options["start_new_session"] = True
+    try:
+        process = subprocess.Popen(args, **process_options)
+    finally:
+        stdout.close()
+        stderr.close()
     _write_pid(_pid_path(config), process.pid)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if _health_ok(config.method_base_url + "/health"):
             return AutostartResult(
                 status="started",
-                platform="darwin",
+                platform=system,
                 health_url=config.method_base_url + "/health",
-                message="started by the Baijimu permission host without LaunchAgent",
+                message=(
+                    "started as a detached Windows process managed by Baijimu"
+                    if system == "windows"
+                    else "started by the Baijimu permission host without LaunchAgent"
+                ),
             )
         exit_code = process.poll()
         if exit_code is not None:
@@ -220,29 +198,10 @@ def _start_macos(config: CollectorConfig) -> AutostartResult:
         time.sleep(0.25)
     return AutostartResult(
         status="started",
-        platform="darwin",
+        platform=system,
         health_url=config.method_base_url + "/health",
         message="collector start issued; health check is not ready yet",
     )
-
-
-def _write_windows_launcher(config: CollectorConfig) -> Path:
-    state_dir = Path(config.state_dir).expanduser()
-    launcher_dir = state_dir / "launchers" / "windows"
-    launcher_dir.mkdir(parents=True, exist_ok=True)
-    launcher = launcher_dir / "start-collector.ps1"
-    launcher.write_text(
-        _render_resource(
-            "windows",
-            "start-collector.ps1",
-            {
-                "PYTHON": sys.executable,
-                "STATE_DIR": str(state_dir),
-            },
-        ),
-        encoding="utf-8",
-    )
-    return launcher
 
 
 def _macos_plist_path() -> Path:
@@ -251,19 +210,6 @@ def _macos_plist_path() -> Path:
 
 def _package_root() -> Path:
     return Path(__file__).resolve().parents[1]
-
-
-def _render_resource(platform_dir: str, name: str, values: dict[str, str]) -> str:
-    template = (
-        resources.files(__package__)
-        .joinpath("scripts")
-        .joinpath(platform_dir)
-        .joinpath(name)
-        .read_text(encoding="utf-8")
-    )
-    for key, value in values.items():
-        template = template.replace("{{" + key + "}}", value)
-    return template
 
 
 def _remove_legacy_macos_autostart() -> None:
@@ -315,7 +261,33 @@ def _process_running(pid: int) -> bool:
 
 
 def _collector_process_matches(pid: int) -> bool:
-    if platform.system().lower() != "darwin":
+    system = platform.system().lower()
+    if system == "windows":
+        completed = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                (
+                    "$process = Get-CimInstance Win32_Process -Filter \"ProcessId = "
+                    f"{pid}\" -ErrorAction SilentlyContinue; "
+                    "if ($null -eq $process) { exit 3 }; "
+                    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+                    "$process.CommandLine"
+                ),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=3,
+        )
+        command_line = completed.stdout.lower()
+        return (
+            completed.returncode == 0
+            and "wechat_bridge_collector" in command_line
+            and " run" in command_line
+        )
+    if system != "darwin":
         return _process_running(pid)
     completed = subprocess.run(
         ["ps", "-p", str(pid), "-o", "command="],
@@ -324,6 +296,20 @@ def _collector_process_matches(pid: int) -> bool:
         timeout=5,
     )
     return completed.returncode == 0 and "wechat_bridge_collector" in completed.stdout
+
+
+def _terminate_windows_process_tree(pid: int) -> None:
+    completed = subprocess.run(
+        ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
+        text=True,
+        capture_output=True,
+        timeout=5,
+    )
+    deadline = time.monotonic() + 2
+    while _process_running(pid) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if _process_running(pid):
+        raise RuntimeError(_format_process_error(completed))
 
 
 def _rotate_log(path: Path, max_bytes: int = 5 * 1024 * 1024, backups: int = 3) -> None:
@@ -351,15 +337,11 @@ def _tail_text(path: Path, limit: int = 4096) -> str:
 
 
 def _health_ok(url: str) -> bool:
-    if not shutil.which("curl"):
+    try:
+        with urlopen(url, timeout=1) as response:
+            return response.status == 200
+    except (HTTPError, URLError, TimeoutError, OSError):
         return False
-    completed = subprocess.run(
-        ["curl", "-fsS", url],
-        text=True,
-        capture_output=True,
-        timeout=5,
-    )
-    return completed.returncode == 0
 
 
 def _format_process_error(completed: subprocess.CompletedProcess[str]) -> str:

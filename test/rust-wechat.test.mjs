@@ -25,8 +25,12 @@ async function freePort() {
   return port;
 }
 
-async function waitForHealth(port) {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+async function waitForHealth(port, proc, stderr) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (proc.exitCode !== null) {
+      throw new Error(`wechat collector exited with ${proc.exitCode}: ${stderr.join("")}`);
+    }
     try {
       const response = await fetch(`http://127.0.0.1:${port}/health`);
       if (response.ok) {
@@ -37,7 +41,7 @@ async function waitForHealth(port) {
     }
     await delay(50);
   }
-  throw new Error("wechat collector did not become healthy");
+  throw new Error(`wechat collector did not become healthy: ${stderr.join("")}`);
 }
 
 async function postJson(port, path, body = {}) {
@@ -147,9 +151,11 @@ test("rust method server serves WeChat query methods from local SQLite snapshots
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, WECHAT_DECRYPT_DIR: "" },
   });
+  const stderr = [];
+  proc.stderr.on("data", (chunk) => stderr.push(chunk.toString("utf8")));
 
   try {
-    await waitForHealth(port);
+    await waitForHealth(port, proc, stderr);
 
     const sessions = await postJson(port, "/invoke/getRecentSessions", { limit: 5 });
     assert.equal(sessions.sessions[0].conversationId, "alice");

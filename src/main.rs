@@ -1647,10 +1647,10 @@ fn dispatch_method(source: &WeChatSource, method: &str, payload: &Value) -> Resu
             value_usize(obj.get("offset"), 0),
             obj.get("startTime")
                 .or_else(|| obj.get("start_time"))
-                .unwrap_or(&Value::String(String::new())),
+                .unwrap_or(&Value::Null),
             obj.get("endTime")
                 .or_else(|| obj.get("end_time"))
-                .unwrap_or(&Value::String(String::new())),
+                .unwrap_or(&Value::Null),
             obj.get("oldestFirst")
                 .or_else(|| obj.get("oldest_first"))
                 .and_then(Value::as_bool)
@@ -1666,10 +1666,10 @@ fn dispatch_method(source: &WeChatSource, method: &str, payload: &Value) -> Resu
             value_usize(obj.get("offset"), 0),
             obj.get("startTime")
                 .or_else(|| obj.get("start_time"))
-                .unwrap_or(&Value::String(String::new())),
+                .unwrap_or(&Value::Null),
             obj.get("endTime")
                 .or_else(|| obj.get("end_time"))
-                .unwrap_or(&Value::String(String::new())),
+                .unwrap_or(&Value::Null),
         ),
         "getMessageById" => {
             Ok(json!({"message": source.get_message_by_id(require_string(obj, "messageId")?)?}))
@@ -1678,9 +1678,8 @@ fn dispatch_method(source: &WeChatSource, method: &str, payload: &Value) -> Resu
             require_string(obj, "conversationId")?,
             value_usize(obj.get("limit"), 20),
             value_usize(obj.get("offset"), 0),
-            obj.get("startTime")
-                .unwrap_or(&Value::String(String::new())),
-            obj.get("endTime").unwrap_or(&Value::String(String::new())),
+            obj.get("startTime").unwrap_or(&Value::Null),
+            obj.get("endTime").unwrap_or(&Value::Null),
             false,
             Some(&json!(["image"])),
         ),

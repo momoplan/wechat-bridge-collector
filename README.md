@@ -24,6 +24,8 @@
 
 从 `3.1.3` 起，权威源码和标签发布到 Gitee，并同步 GitHub 镜像；百积木登记的安装归档使用 `download.baijimu.com` 国内公共 OSS 内容寻址地址，不再让客户安装器直接下载 GitHub/Gitee 归档。
 
+从 `3.1.4` 起，Windows 后台启动不再经由 PowerShell 启动器转接，避免 Bridge Agent 捕获的标准输出句柄让生命周期命令超时；停止时会核验记录 PID 的命令行身份并回收完整 Python 进程树。
+
 macOS 上由签名后的百积木桌面应用作为权限宿主启动 Python 子进程。Connector 不再安装或加载 LaunchAgent；这是为了让微信沙盒数据库的访问权限稳定归属到“百积木”，而不是归属到一个无稳定签名身份的独立 Python/launchd 进程。
 
 ## 架构
@@ -47,7 +49,7 @@ collector 不直接连接 relay，也不修改微信数据。
 ```bash
 baijimu local-app install \
   36d35399-a0cd-11f1-8622-00163e3536cb \
-  --version 3.1.3 \
+  --version 3.1.4 \
   --replace
 ```
 
@@ -152,7 +154,7 @@ wechat-bridge-collector-python stop
 ```
 
 - macOS：必须由百积木应用详情页显式启动；不创建 LaunchAgent，不随登录自行拉起。
-- Windows：渲染并执行 `wechat_bridge_collector/scripts/windows/start-collector.ps1`。
+- Windows：由启动命令直接创建脱离控制台的 Python 后台进程并记录 PID；停止时校验命令行身份并回收完整进程树。
 - Linux：当前未提供后台启动集成。
 
 Connector 清单中的 `runtime` 启动命令会统一解析为：

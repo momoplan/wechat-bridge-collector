@@ -18,7 +18,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert not (ROOT / "bin" / "macos-x86_64" / "wechat-bridge-collector").exists()
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "3.1.3"
+    assert manifest["version"] == "3.1.4"
     assert manifest["version"] == __version__
     assert manifest["source"]["repo"] == "https://gitee.com/zxflimit_admin/wechat-bridge-collector.git"
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
@@ -119,6 +119,7 @@ def test_embedded_ui_disables_summary_only_sessions():
 
 def test_jenkins_pipeline_only_validates_and_packages_source():
     pipeline = (ROOT / "Jenkinsfile.wechat-release").read_text(encoding="utf-8")
+    job_config = (ROOT / "jenkins-wechat-release.xml").read_text(encoding="utf-8")
     assert "node --test tests/*.test.mjs" in pipeline
     assert 'git rev-parse refs/remotes/origin/main' in pipeline
     assert "stage('Package source artifact')" in pipeline
@@ -127,3 +128,4 @@ def test_jenkins_pipeline_only_validates_and_packages_source():
     assert "git ls-remote" not in pipeline
     assert "withCredentials" not in pipeline
     assert "local-app publish" not in pipeline
+    assert "<defaultValue>3.1.4</defaultValue>" in job_config
