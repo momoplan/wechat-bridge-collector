@@ -35,10 +35,10 @@ test "$(jq -r '.runtime.command' connector.json)" = "wechat-bridge-collector-pyt
 test "$(jq -r '.runtime.startPolicy' connector.json)" = "manual"
 test "$(jq -r '.ui.entry' connector.json)" = "ui/index.html"
 test "$(jq -r '.management.auth.type' connector.json)" = "connector_token"
-test "$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml | head -1)" = "$CONNECTOR_VERSION"
-test "$(sed -n 's/^requires-python = "\([^"]*\)"/\1/p' pyproject.toml)" = ">=3.10"
-test "$(sed -n 's/^__version__ = "\([^"]*\)"/\1/p' wechat_bridge_collector/__init__.py)" = "$CONNECTOR_VERSION"
-test "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" = "$CONNECTOR_VERSION"
+test "$(sed -n 's/^version = "\\([^" ]*\\)"/\\1/p' pyproject.toml | head -1)" = "$CONNECTOR_VERSION"
+test "$(sed -n 's/^requires-python = "\\([^" ]*\\)"/\\1/p' pyproject.toml)" = ">=3.10"
+test "$(sed -n 's/^__version__ = "\\([^" ]*\\)"/\\1/p' wechat_bridge_collector/__init__.py)" = "$CONNECTOR_VERSION"
+test "$(sed -n 's/^version = "\\([^" ]*\\)"/\\1/p' Cargo.toml | head -1)" = "$CONNECTOR_VERSION"
 test ! -e .gitmodules
 test ! -e bin/macos-x86_64/wechat-bridge-collector
 test -f vendor/wechat-decrypt.upstream.json
