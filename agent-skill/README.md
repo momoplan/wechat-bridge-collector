@@ -18,7 +18,7 @@
 
 配置成功后，本机应具备：
 
-- `wechatLocal.messageReceived` 事件广播。
+- `wechatLocal.messageReceived` 事件广播，payload 包含归属工作微信 `accountId`。
 - `getRecentSessions`
 - `getContacts`
 - `getChatHistory`

@@ -163,6 +163,7 @@ MESSAGE_EVENT_PAYLOAD_SCHEMA: dict[str, Any] = {
     "type": "object",
     "description": "Payload emitted for each WeChat message observed in the local database.",
     "required": [
+        "accountId",
         "messageId",
         "dbPath",
         "tableName",
@@ -180,6 +181,10 @@ MESSAGE_EVENT_PAYLOAD_SCHEMA: dict[str, Any] = {
         "platform",
     ],
     "properties": {
+        "accountId": {
+            "type": "string",
+            "description": "Current local WeChat account ID owning the work device event.",
+        },
         "messageId": {
             "type": "string",
             "description": "Stable collector message ID formatted as dbPath:tableName:localId.",

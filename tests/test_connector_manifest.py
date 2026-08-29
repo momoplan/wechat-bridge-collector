@@ -18,7 +18,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert not (ROOT / "bin" / "macos-x86_64" / "wechat-bridge-collector").exists()
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "3.1.0"
+    assert manifest["version"] == "3.1.1"
     assert manifest["version"] == __version__
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
     assert manifest["runtime"]["command"].endswith("-python")
@@ -87,6 +87,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["events"][1]["name"] == "contactSnapshotChanged"
     assert manifest["events"][1]["payload_schema"] == CONTACT_EVENT_PAYLOAD_SCHEMA
     assert "conversationId" in manifest["events"][0]["payload_schema"]["properties"]
+    assert "accountId" in manifest["events"][0]["payload_schema"]["required"]
     assert "senderName" in manifest["events"][0]["payload_schema"]["properties"]
     event_schema = manifest["events"][0]["payload_schema"]
     assert event_schema["properties"]["timestamp"]["type"] == "integer"

@@ -1185,6 +1185,7 @@ class WeChatSource:
             return None
 
         payload: dict[str, Any] = {
+            "accountId": self.account_profile()["accountId"],
             "messageId": message_id,
             "dbPath": rel_key,
             "tableName": table_name,
