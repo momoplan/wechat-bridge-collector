@@ -11,6 +11,30 @@ from .config import CollectorConfig
 
 METHOD_DECLARATIONS: list[dict[str, Any]] = [
     {
+        "name": "getAccountProfile",
+        "description": "Return the stable local WeChat account identity currently backed by this collector.",
+        "path": "/invoke/getAccountProfile",
+        "httpMethod": "POST",
+        "timeoutSecs": 30,
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "getContactSnapshot",
+        "description": "Read a paginated, checkpointed snapshot of direct WeChat contacts; groups are excluded by default.",
+        "path": "/invoke/getContactSnapshot",
+        "httpMethod": "POST",
+        "timeoutSecs": 30,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 500},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "includeGroups": {"type": "boolean", "default": False},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "getRecentSessions",
         "description": "List recent WeChat conversations with latest-message summaries and whether each conversation has readable history.",
         "path": "/invoke/getRecentSessions",
@@ -35,6 +59,8 @@ METHOD_DECLARATIONS: list[dict[str, Any]] = [
             "properties": {
                 "query": {"type": "string", "default": ""},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "includeGroups": {"type": "boolean", "default": True},
             },
             "additionalProperties": False,
         },
@@ -238,6 +264,24 @@ MESSAGE_EVENT_PAYLOAD_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+CONTACT_EVENT_PAYLOAD_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["accountId", "snapshotToken", "phase", "source", "platform"],
+    "properties": {
+        "accountId": {"type": "string"},
+        "snapshotToken": {"type": "string"},
+        "phase": {"type": "string", "enum": ["started", "contact", "completed"]},
+        "contactId": {"type": "string"},
+        "displayName": {"type": "string"},
+        "nickName": {"type": "string"},
+        "remark": {"type": "string"},
+        "contactCount": {"type": "integer"},
+        "source": {"type": "string", "enum": ["wechat-local-db"]},
+        "platform": {"type": "string"},
+    },
+    "additionalProperties": False,
+}
+
 
 @dataclass
 class BridgeResponse:
@@ -270,9 +314,18 @@ class BridgeClient:
             return BridgeResponse(False, 0, str(exc))
 
     def emit_message(self, payload: dict[str, Any], event_id: str, occurred_at: str | None) -> BridgeResponse:
+        return self.emit_event(self.config.event_name, payload, event_id, occurred_at)
+
+    def emit_event(
+        self,
+        event_name: str,
+        payload: dict[str, Any],
+        event_id: str,
+        occurred_at: str | None = None,
+    ) -> BridgeResponse:
         request = {
             "appId": self.config.app_id,
-            "event": self.config.event_name,
+            "event": event_name,
             "eventId": event_id,
             "payload": payload,
         }

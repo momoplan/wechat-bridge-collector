@@ -44,7 +44,7 @@ collector 不直接连接 relay，也不修改微信数据。
 
 ```bash
 baijimu local-app install \
-  'https://github.com/momoplan/wechat-bridge-collector.git#v3.0.1' \
+  'https://github.com/momoplan/wechat-bridge-collector.git#v3.1.0' \
   --replace
 ```
 
@@ -166,6 +166,7 @@ Connector 的 `runtime.startPolicy` 是 `manual`。Bridge Agent 构建运行时�
 
 - appId: `36d35399-a0cd-11f1-8622-00163e3536cb`
 - event: `messageReceived`
+- event: `contactSnapshotChanged`，按 `started/contact/completed` 顺序同步直接好友快照
 
 payload 示例：
 
@@ -198,6 +199,8 @@ payload 示例：
 - `stopCommand`：停止 PID 文件所指向且经过命令行校验的采集器进程。
 
 - `getRecentSessions`：查询最近会话。
+- `getAccountProfile`：返回当前授权工作微信账号的稳定账号标识。
+- `getContactSnapshot`：分页读取带检查点的直接好友快照；默认排除群聊。
 - `getContacts`：搜索或列出联系人、群聊。
 - `getChatHistory`：按会话分页查询消息历史。
 - `searchMessages`：按关键词搜索消息，可限定会话和时间范围。
@@ -234,4 +237,4 @@ collector 状态默认保存在：
 ~/.wechat-bridge-collector/state.json
 ```
 
-状态里只保存会话时间戳和消息表游标，不保存消息正文。
+状态里只保存会话时间戳、消息表游标和联系人快照检查点，不保存消息正文。

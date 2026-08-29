@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from wechat_bridge_collector import __version__
-from wechat_bridge_collector.bridge import MESSAGE_EVENT_PAYLOAD_SCHEMA
+from wechat_bridge_collector.bridge import CONTACT_EVENT_PAYLOAD_SCHEMA, MESSAGE_EVENT_PAYLOAD_SCHEMA
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +18,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert not (ROOT / "bin" / "macos-x86_64" / "wechat-bridge-collector").exists()
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "3.0.1"
+    assert manifest["version"] == "3.1.0"
     assert manifest["version"] == __version__
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
     assert manifest["runtime"]["command"].endswith("-python")
@@ -47,6 +47,8 @@ def test_connector_manifest_declares_local_app_capabilities():
     }
     assert manifest["management"]["auth"]["type"] == "connector_token"
     assert manifest["management"]["operations"]["getChatHistory"]["path"] == "/management/v1/chat-history"
+    assert manifest["management"]["operations"]["getAccountProfile"]["path"] == "/management/v1/account-profile"
+    assert manifest["management"]["operations"]["getContactSnapshot"]["path"] == "/management/v1/contact-snapshot"
     assert manifest["management"]["operations"]["acquireKeys"]["path"] == "/management/v1/acquire-keys"
     assert manifest["management"]["operations"]["importKeys"]["path"] == "/management/v1/import-keys"
     assert manifest["management"]["operations"]["retrySetup"]["path"] == "/management/v1/retry-setup"
@@ -82,6 +84,8 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["runtime"]["stopArgs"] == ["stop"]
     assert manifest["events"][0]["name"] == "messageReceived"
     assert manifest["events"][0]["payload_schema"] == MESSAGE_EVENT_PAYLOAD_SCHEMA
+    assert manifest["events"][1]["name"] == "contactSnapshotChanged"
+    assert manifest["events"][1]["payload_schema"] == CONTACT_EVENT_PAYLOAD_SCHEMA
     assert "conversationId" in manifest["events"][0]["payload_schema"]["properties"]
     assert "senderName" in manifest["events"][0]["payload_schema"]["properties"]
     event_schema = manifest["events"][0]["payload_schema"]

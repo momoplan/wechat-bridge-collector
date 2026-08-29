@@ -4,7 +4,7 @@ import unittest
 import urllib.error
 import urllib.request
 
-from wechat_bridge_collector.app import retry_delay
+from wechat_bridge_collector.app import load_complete_contact_snapshot, retry_delay
 from wechat_bridge_collector.autostart import start_command
 from wechat_bridge_collector.config import CollectorConfig
 from wechat_bridge_collector.query_server import (
@@ -33,18 +33,47 @@ class ConnectorLifecycleTest(unittest.TestCase):
         self.assertEqual(retry_delay(2.0, 6), 60.0)
         self.assertEqual(retry_delay(2.0, 20), 60.0)
 
+    def test_complete_contact_snapshot_reads_every_page(self):
+        class FakeSource:
+            def contact_snapshot(self, limit=500, offset=0, include_groups=False):
+                contacts = [{"username": f"user-{index}"} for index in range(7)]
+                page = contacts[offset : offset + limit]
+                return {
+                    "account": {"accountId": "sales", "source": "test", "platform": "darwin"},
+                    "snapshotToken": "snapshot-1",
+                    "contacts": page,
+                    "offset": offset,
+                    "limit": limit,
+                    "total": len(contacts),
+                    "hasMore": offset + len(page) < len(contacts),
+                }
+
+        snapshot = load_complete_contact_snapshot(FakeSource(), page_size=3)
+        self.assertEqual(len(snapshot["contacts"]), 7)
+        self.assertEqual(snapshot["total"], 7)
+        self.assertFalse(snapshot["hasMore"])
+
 
 class QueryServerTest(unittest.TestCase):
     def test_dispatch_and_http_response(self):
         class FakeSource:
+            def account_profile(self):
+                return {"accountId": "wxid_sales", "displayName": "wxid_sales"}
+
+            def contact_snapshot(self, limit=500, offset=0, include_groups=False):
+                return {"contacts": [], "limit": limit, "offset": offset, "includeGroups": include_groups}
+
             def recent_sessions(self, limit=20):
                 return [{"conversationId": "alice", "limit": limit}]
 
-            def contacts(self, query="", limit=50):
-                return [{"username": "alice", "query": query, "limit": limit}]
+            def contacts(self, query="", limit=50, offset=0, include_groups=True):
+                return [{"username": "alice", "query": query, "limit": limit, "offset": offset, "includeGroups": include_groups}]
 
         result = dispatch_method(FakeSource(), "getContacts", {"query": "ali", "limit": 3})
         self.assertEqual(result["contacts"][0]["username"], "alice")
+        snapshot = dispatch_method(FakeSource(), "getContactSnapshot", {"offset": 25, "includeGroups": False})
+        self.assertEqual(snapshot["offset"], 25)
+        self.assertEqual(dispatch_method(FakeSource(), "getAccountProfile", {})["account"]["accountId"], "wxid_sales")
 
         server = QueryMethodServer(CollectorConfig(method_port=0), FakeSource())
         server.start()

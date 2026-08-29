@@ -2,7 +2,7 @@
   "schemaVersion": "3.0.0",
   "appId": "36d35399-a0cd-11f1-8622-00163e3536cb",
   "name": "WeChat Connector",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
   "publisher": {
     "name": "Baijimu",
@@ -11,7 +11,7 @@
   "source": {
     "type": "git",
     "repo": "https://github.com/momoplan/wechat-bridge-collector.git",
-    "revision": "v3.0.1"
+    "revision": "v3.1.0"
   },
   "runtime": {
     "type": "process",
@@ -73,6 +73,14 @@
       "getRecentSessions": {
         "method": "POST",
         "path": "/management/v1/recent-sessions"
+      },
+      "getAccountProfile": {
+        "method": "POST",
+        "path": "/management/v1/account-profile"
+      },
+      "getContactSnapshot": {
+        "method": "POST",
+        "path": "/management/v1/contact-snapshot"
       },
       "getContacts": {
         "method": "POST",
@@ -138,6 +146,16 @@
       "name": "wechat.events.messageReceived",
       "risk": "high",
       "description": "Emit local WeChat message notifications through Baijimu Local."
+    },
+    {
+      "name": "wechat.contacts.read",
+      "risk": "high",
+      "description": "Read the authorized work WeChat account identity and direct-contact snapshots."
+    },
+    {
+      "name": "wechat.events.contactSnapshotChanged",
+      "risk": "high",
+      "description": "Emit checkpointed direct-contact snapshot changes through Baijimu Local."
     }
   ],
   "hooks": {
@@ -149,6 +167,46 @@
     "baseUrl": "http://127.0.0.1:18082"
   },
   "methods": [
+    {
+      "name": "getAccountProfile",
+      "description": "Return the stable local WeChat account identity currently backed by this collector.",
+      "path": "/invoke/getAccountProfile",
+      "httpMethod": "POST",
+      "timeoutSecs": 30,
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "getContactSnapshot",
+      "description": "Read a paginated, checkpointed snapshot of direct WeChat contacts; groups are excluded by default.",
+      "path": "/invoke/getContactSnapshot",
+      "httpMethod": "POST",
+      "timeoutSecs": 30,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 500
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "includeGroups": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     {
       "name": "getRecentSessions",
       "description": "List recent WeChat conversations with latest-message summaries and whether each conversation has readable history.",
@@ -186,6 +244,15 @@
             "minimum": 1,
             "maximum": 500,
             "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "includeGroups": {
+            "type": "boolean",
+            "default": true
           }
         },
         "additionalProperties": false
@@ -493,6 +560,34 @@
             "type": "string",
             "description": "Best-effort message text or type placeholder. Present only when includeText is enabled."
           }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "contactSnapshotChanged",
+      "description": "Emitted as a started/contact/completed sequence when the authorized account direct-contact snapshot changes.",
+      "enabled": true,
+      "payload_schema": {
+        "type": "object",
+        "required": [
+          "accountId",
+          "snapshotToken",
+          "phase",
+          "source",
+          "platform"
+        ],
+        "properties": {
+          "accountId": {"type": "string"},
+          "snapshotToken": {"type": "string"},
+          "phase": {"type": "string", "enum": ["started", "contact", "completed"]},
+          "contactId": {"type": "string"},
+          "displayName": {"type": "string"},
+          "nickName": {"type": "string"},
+          "remark": {"type": "string"},
+          "contactCount": {"type": "integer"},
+          "source": {"type": "string", "enum": ["wechat-local-db"]},
+          "platform": {"type": "string"}
         },
         "additionalProperties": false
       }
