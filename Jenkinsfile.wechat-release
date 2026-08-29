@@ -250,7 +250,7 @@ cat "$release_dir/publication.json"
             sh '''#!/bin/bash
 set -euo pipefail
 release_dir="$WORKSPACE/.release-local-app"
-case "$release_dir" in "$WORKSPACE"/*) ;; exit 0 ;; esac
+case "$release_dir" in "$WORKSPACE"/*) ;; *) exit 0 ;; esac
 rm -rf -- "$release_dir"
 '''
         }

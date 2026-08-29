@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import re
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,3 +35,13 @@ def test_dry_run_never_enters_platform_registration_stage():
     pipeline = (ROOT / "Jenkinsfile.wechat-release").read_text(encoding="utf-8")
     registration_stage = pipeline.split("stage('Register existing local app version')", 1)[1]
     assert "return !params.DRY_RUN" in registration_stage
+
+
+def test_all_pipeline_shell_blocks_parse_as_bash():
+    pipeline = (ROOT / "Jenkinsfile.wechat-release").read_text(encoding="utf-8")
+    shell_blocks = re.findall(r"sh '''(.*?)'''", pipeline, flags=re.DOTALL)
+    assert len(shell_blocks) == 7
+    for shell_block in shell_blocks:
+        subprocess.run(
+            ["bash", "-n"], input=shell_block, text=True, check=True, cwd=ROOT
+        )
