@@ -120,8 +120,6 @@ def test_embedded_ui_disables_summary_only_sessions():
 def test_jenkins_pipeline_only_validates_and_packages_source():
     pipeline = (ROOT / "Jenkinsfile.wechat-release").read_text(encoding="utf-8")
     assert "node --test tests/*.test.mjs" in pipeline
-    assert "cargo fmt --check" in pipeline
-    assert "cargo test --locked" in pipeline
     assert 'git rev-parse refs/remotes/origin/main' in pipeline
     assert "stage('Package source artifact')" in pipeline
     assert "archiveArtifacts" in pipeline

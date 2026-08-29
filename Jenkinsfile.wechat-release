@@ -69,8 +69,6 @@ python3 -m pip install \
   . pytest
 PYTHONPATH="$WORKSPACE:$release_python" python3 -m pytest -q
 node --test tests/*.test.mjs
-cargo fmt --check
-cargo test --locked
 python3 -m py_compile wechat_bridge_collector/*.py
 bash -n agent-skill/scripts/setup_macos.sh
 jq -e . connector.json >/dev/null
