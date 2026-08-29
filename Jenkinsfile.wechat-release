@@ -10,7 +10,7 @@ pipeline {
     parameters {
         string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
         string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
-        string(name: 'CONNECTOR_VERSION', defaultValue: '3.1.2', description: 'WeChat Connector version')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '3.1.3', description: 'WeChat Connector version')
         string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.6.0', description: 'Minimum compatible Bridge Agent version')
         booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing Git refs')
     }
@@ -28,7 +28,8 @@ test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_COMMIT"
 test "$(jq -r '.version' connector.json)" = "$CONNECTOR_VERSION"
 test "$(jq -r '.source.revision' connector.json)" = "v${CONNECTOR_VERSION}"
 test "$(jq -r '.schemaVersion' connector.json)" = "3.0.0"
-test "$(jq -r '.appId' connector.json)" = "36d35399-a0cd-11f1-8622-00163e3536cb"
+app_id="$(jq -er '.appId' connector.json)"
+[[ "$app_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
 test "$(jq -r 'has("id")' connector.json)" = "false"
 test "$(jq -r '.hostRequirements.minimumVersion' connector.json)" = "$MIN_BRIDGE_VERSION"
 test "$(jq -r '.runtime.command' connector.json)" = "wechat-bridge-collector-python"
@@ -48,6 +49,10 @@ test -f vendor/wechat-decrypt/find_all_keys_windows.py
 test -f vendor/wechat-decrypt/find_all_keys_macos.c
 test ! -e wechat_bridge_collector/scripts/macos/com.baijimu.wechat-bridge-collector.plist
 ! jq -e '.hooks.installAutostart' connector.json >/dev/null
+jq -e . tools/release/baijimu-cli-linux.json >/dev/null
+bash -n tools/release/install-baijimu-cli.sh
+bash -n tools/release/prepare-local-app-release.sh
+bash -n tools/release/register-local-app-release.sh
 case "$CONNECTOR_VERSION" in *[!0-9.]*|'') exit 1 ;; esac
 case "$MIN_BRIDGE_VERSION" in *[!0-9.]*|'') exit 1 ;; esac
 '''
@@ -78,6 +83,32 @@ test -f ui/app.js
 test -f ui/styles.css
 test -f ui/time-range.mjs
 test -f ui/session-model.mjs
+'''
+            }
+        }
+
+        stage('Prepare local app registration request') {
+            steps {
+                sh '''#!/bin/bash
+set -euo pipefail
+release_dir="$WORKSPACE/.release-local-app"
+case "$release_dir" in "$WORKSPACE"/*) ;; *) exit 1 ;; esac
+rm -rf -- "$release_dir"
+mkdir -p "$release_dir"
+
+archive="$release_dir/source.zip"
+git archive --format=zip --prefix="wechat-bridge-collector-${CONNECTOR_VERSION}/" \
+  "$SOURCE_COMMIT" -o "$archive"
+repo_url="$(jq -er .source.repo connector.json)"
+archive_url="${repo_url%.git}/archive/v${CONNECTOR_VERSION}.zip"
+tools/release/prepare-local-app-release.sh \
+  "$CONNECTOR_VERSION" connector.json "$archive" "$archive_url" \
+  "$release_dir/request.json"
+jq -e \
+  --arg appId "$(jq -er .appId connector.json)" \
+  --arg version "$CONNECTOR_VERSION" '
+  .manifest.appId == $appId and .version == $version and .sourceType == "archive"
+' "$release_dir/request.json" >/dev/null
 '''
             }
         }
@@ -149,52 +180,79 @@ publish_remote "https://github.com/momoplan/wechat-bridge-collector.git"
             }
         }
 
-        stage('Verify published release') {
+        stage('Verify published release archive') {
             when {
                 expression { return !params.DRY_RUN }
             }
             steps {
                 sh '''#!/bin/bash
 set -euo pipefail
-release_verify_dir="$(mktemp -d)"
-case "$release_verify_dir" in /tmp/*|/private/tmp/*) ;; *) exit 1 ;; esac
-trap 'rm -rf -- "$release_verify_dir"' EXIT
+release_dir="$WORKSPACE/.release-local-app"
+case "$release_dir" in "$WORKSPACE"/*) ;; *) exit 1 ;; esac
+test -d "$release_dir"
 
-verify_zip_archive() {
-  archive_url="$1"
-  archive_name="$2"
-  archive_path="$release_verify_dir/$archive_name"
-  curl -fL --retry 5 --retry-all-errors --connect-timeout 10 --max-time 120 \
-    "$archive_url" -o "$archive_path"
-  sha256sum "$archive_path"
-  archive_listing="$(unzip -Z1 "$archive_path")"
-  grep -Eq '/vendor/wechat-decrypt/key_utils[.]py$' <<<"$archive_listing"
-  grep -Eq '/vendor/wechat-decrypt/find_all_keys[.]py$' <<<"$archive_listing"
-  grep -Eq '/vendor/wechat-decrypt/find_all_keys_windows[.]py$' <<<"$archive_listing"
-  grep -Eq '/vendor/wechat-decrypt/find_all_keys_macos[.]c$' <<<"$archive_listing"
-  grep -Eq '/ui/time-range[.]mjs$' <<<"$archive_listing"
-  grep -Eq '/ui/session-model[.]mjs$' <<<"$archive_listing"
-  unzip -p "$archive_path" '*/connector.json' | jq -e --arg version "$CONNECTOR_VERSION" \
-    '.version == $version and .source.revision == ("v" + $version)' >/dev/null
-}
-
-source_archive="$release_verify_dir/source.tar"
-git archive --format=tar "$SOURCE_COMMIT" > "$source_archive"
-source_listing="$(tar -tf "$source_archive")"
-grep -Eq '^vendor/wechat-decrypt/key_utils[.]py$' <<<"$source_listing"
-grep -Eq '^vendor/wechat-decrypt/find_all_keys[.]py$' <<<"$source_listing"
-grep -Eq '^vendor/wechat-decrypt/find_all_keys_windows[.]py$' <<<"$source_listing"
-grep -Eq '^vendor/wechat-decrypt/find_all_keys_macos[.]c$' <<<"$source_listing"
-grep -Eq '^ui/time-range[.]mjs$' <<<"$source_listing"
-grep -Eq '^ui/session-model[.]mjs$' <<<"$source_listing"
-tar -xOf "$source_archive" connector.json | jq -e --arg version "$CONNECTOR_VERSION" \
-  '.version == $version and .source.revision == ("v" + $version)' >/dev/null
-
-verify_zip_archive \
-  "https://github.com/momoplan/wechat-bridge-collector/archive/v${CONNECTOR_VERSION}.zip" \
-  github.zip
+repo_url="$(jq -er .source.repo connector.json)"
+archive_url="${repo_url%.git}/archive/v${CONNECTOR_VERSION}.zip"
+archive="$release_dir/published.zip"
+curl -fL --retry 8 --retry-all-errors --connect-timeout 10 --max-time 300 \
+  "$archive_url" -o "$archive"
+tools/release/prepare-local-app-release.sh \
+  "$CONNECTOR_VERSION" connector.json "$archive" "$archive_url" \
+  "$release_dir/request.json"
+jq -r '"verified archive sha256=" + .checksum' "$release_dir/request.json"
 '''
             }
+        }
+
+        stage('Register existing local app version') {
+            when {
+                expression { return !params.DRY_RUN }
+            }
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'wechat-local-app-market-publish-token',
+                        variable: 'LOCAL_APP_MARKET_PUBLISH_TOKEN'
+                    ),
+                    string(
+                        credentialsId: 'wechat-local-app-owner-workspace-id',
+                        variable: 'LOCAL_APP_OWNER_WORKSPACE_ID'
+                    )
+                ]) {
+                    sh '''#!/bin/bash
+set -euo pipefail
+set +x
+release_dir="$WORKSPACE/.release-local-app"
+case "$release_dir" in "$WORKSPACE"/*) ;; *) exit 1 ;; esac
+test -f "$release_dir/request.json"
+cli_dir="$release_dir/baijimu-cli"
+BAIJIMU_CLI="$(tools/release/install-baijimu-cli.sh \
+  tools/release/baijimu-cli-linux.json "$cli_dir")"
+export BAIJIMU_CLI LOCAL_APP_MARKET_PUBLISH_TOKEN LOCAL_APP_OWNER_WORKSPACE_ID
+tools/release/register-local-app-release.sh "$release_dir/request.json" \
+  > "$release_dir/publication.json"
+jq -e \
+  --arg appId "$(jq -er .appId connector.json)" \
+  --arg version "$CONNECTOR_VERSION" '
+  .appId == $appId and .version == $version and
+  (.status == "PENDING_REVIEW" or .status == "PUBLISHED")
+' "$release_dir/publication.json" >/dev/null
+cat "$release_dir/publication.json"
+'''
+                }
+                archiveArtifacts artifacts: '.release-local-app/request.json,.release-local-app/publication.json', fingerprint: true
+            }
+        }
+    }
+
+    post {
+        always {
+            sh '''#!/bin/bash
+set -euo pipefail
+release_dir="$WORKSPACE/.release-local-app"
+case "$release_dir" in "$WORKSPACE"/*) ;; exit 0 ;; esac
+rm -rf -- "$release_dir"
+'''
         }
     }
 }
