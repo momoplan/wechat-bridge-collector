@@ -555,11 +555,30 @@ class WeChatSource:
         self._contact_names_cache = (signature, names)
         return names
 
-    def contacts(self, query: str = "", limit: int = 50) -> list[dict[str, Any]]:
+    def account_profile(self) -> dict[str, Any]:
+        account_id = Path(self.db_dir).parent.name.strip()
+        if not account_id:
+            raise RuntimeError("cannot resolve WeChat account ID from db_storage path")
+        return {
+            "accountId": account_id,
+            "displayName": account_id,
+            "source": "wechat-local-db",
+            "platform": platform.system().lower(),
+        }
+
+    def contacts(
+        self,
+        query: str = "",
+        limit: int = 50,
+        offset: int = 0,
+        include_groups: bool = True,
+    ) -> list[dict[str, Any]]:
         all_contacts, _signature = self._all_contacts()
         query_l = query.strip().lower()
         contacts = []
         for item in all_contacts:
+            if not include_groups and item["isGroup"]:
+                continue
             if query_l and not any(
                 query_l in str(value or "").lower()
                 for value in (item["username"], item["displayName"], item["nickName"], item["remark"])
@@ -567,7 +586,31 @@ class WeChatSource:
                 continue
             contacts.append(dict(item))
         contacts.sort(key=lambda item: (not item["remark"], item["displayName"].lower()))
-        return contacts[:normalize_limit(limit, 100_000)]
+        normalized_offset = normalize_offset(offset)
+        normalized_limit = normalize_limit(limit, 100_000)
+        return contacts[normalized_offset : normalized_offset + normalized_limit]
+
+    def contact_snapshot(
+        self,
+        limit: int = 500,
+        offset: int = 0,
+        include_groups: bool = False,
+    ) -> dict[str, Any]:
+        all_contacts, signature = self._all_contacts()
+        filtered = [item for item in all_contacts if include_groups or not item["isGroup"]]
+        filtered.sort(key=lambda item: (not item["remark"], item["displayName"].lower()))
+        normalized_offset = normalize_offset(offset)
+        normalized_limit = normalize_limit(limit, 500)
+        page = [dict(item) for item in filtered[normalized_offset : normalized_offset + normalized_limit]]
+        return {
+            "account": self.account_profile(),
+            "snapshotToken": contact_snapshot_token(signature),
+            "contacts": page,
+            "offset": normalized_offset,
+            "limit": normalized_limit,
+            "total": len(filtered),
+            "hasMore": normalized_offset + len(page) < len(filtered),
+        }
 
     def _all_contacts(self) -> tuple[list[dict[str, Any]], tuple[float, int] | None]:
         rel_key = os.path.join("contact", "contact.db")
@@ -1433,6 +1476,13 @@ def file_signature(path: str) -> tuple[float, int] | None:
     except OSError:
         return None
     return stat.st_mtime, stat.st_size
+
+
+def contact_snapshot_token(signature: tuple[float, int] | None) -> str:
+    if signature is None:
+        return "missing"
+    modified_at, size = signature
+    return f"{int(modified_at * 1000)}:{size}"
 
 
 def source_db_file_signature(db_dir: str, rel_key: str) -> tuple[float, int] | None:

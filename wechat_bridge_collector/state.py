@@ -26,9 +26,10 @@ class Cursor:
 
 @dataclass
 class CollectorState:
-    schema_version: int = 1
+    schema_version: int = 2
     sessions: dict[str, int] = field(default_factory=dict)
     cursors: dict[str, Cursor] = field(default_factory=dict)
+    contact_snapshot_token: str = ""
 
     @classmethod
     def load(cls, path: Path) -> "CollectorState":
@@ -42,6 +43,7 @@ class CollectorState:
                 str(k): Cursor.from_json(v)
                 for k, v in raw.get("cursors", {}).items()
             },
+            contact_snapshot_token=str(raw.get("contact_snapshot_token") or ""),
         )
 
     def save(self, path: Path) -> None:
@@ -50,6 +52,7 @@ class CollectorState:
             "schema_version": self.schema_version,
             "sessions": self.sessions,
             "cursors": {k: v.to_json() for k, v in self.cursors.items()},
+            "contact_snapshot_token": self.contact_snapshot_token,
         }
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -63,4 +66,3 @@ class CollectorState:
         if current and (create_time, local_id) < (current.create_time, current.local_id):
             return
         self.cursors[key] = Cursor(create_time=create_time, local_id=local_id)
-

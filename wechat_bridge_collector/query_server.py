@@ -18,6 +18,8 @@ from .wechat_source import WeChatSource, normalize_limit
 
 
 MANAGEMENT_PATHS = {
+    "/management/v1/account-profile": "getAccountProfile",
+    "/management/v1/contact-snapshot": "getContactSnapshot",
     "/management/v1/recent-sessions": "getRecentSessions",
     "/management/v1/contacts": "getContacts",
     "/management/v1/chat-history": "getChatHistory",
@@ -369,13 +371,25 @@ def dispatch_setup(
 
 def dispatch_method(source: WeChatSource, method: str, payload: dict[str, Any]) -> Any:
     handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
+        "getAccountProfile": lambda _p: {"account": source.account_profile()},
+        "getContactSnapshot": lambda p: source.contact_snapshot(
+            limit=p.get("limit", 500),
+            offset=p.get("offset", 0),
+            include_groups=bool(p.get("includeGroups", False)),
+        ),
         "getRecentSessions": lambda p: {
             "sessions": source.recent_sessions(limit=p.get("limit", 20)),
             "limit": normalize_limit(p.get("limit", 20), 200),
         },
         "getContacts": lambda p: {
-            "contacts": source.contacts(query=str(p.get("query") or ""), limit=p.get("limit", 50)),
+            "contacts": source.contacts(
+                query=str(p.get("query") or ""),
+                limit=p.get("limit", 50),
+                offset=p.get("offset", 0),
+                include_groups=bool(p.get("includeGroups", True)),
+            ),
             "limit": normalize_limit(p.get("limit", 50), 500),
+            "offset": max(0, int(p.get("offset", 0))),
         },
         "getChatHistory": lambda p: source.get_chat_history(
             require_string(p, "conversationId"),

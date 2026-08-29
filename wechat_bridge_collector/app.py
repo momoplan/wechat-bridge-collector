@@ -131,6 +131,17 @@ def cmd_run(args: argparse.Namespace) -> int:
                     args.reset_state = False
                     if args.backfill_seconds <= 0:
                         print(f"initialized state without historical broadcast: {cfg.state_path}")
+                snapshot = load_complete_contact_snapshot(source)
+                snapshot_token = snapshot["snapshotToken"]
+                if snapshot_token != state.contact_snapshot_token:
+                    if not emit_contact_snapshot(bridge, snapshot, args.dry_run):
+                        delivery_failure_count += 1
+                        if args.once:
+                            return 1
+                        time.sleep(retry_delay(cfg.poll_interval_secs, delivery_failure_count))
+                        continue
+                    state.contact_snapshot_token = snapshot_token
+                    state.save(cfg.state_path)
                 current_sessions, changed = source.changed_usernames(state)
                 emitted = 0
                 failed = False
@@ -206,6 +217,70 @@ def retry_delay(poll_interval_secs: float, failure_count: int) -> float:
         poll_interval_secs,
         min(60.0, max(2.0, poll_interval_secs) * (2 ** min(max(failure_count, 1) - 1, 5))),
     )
+
+
+def load_complete_contact_snapshot(source: WeChatSource, page_size: int = 500) -> dict:
+    offset = 0
+    contacts: list[dict] = []
+    first_page: dict | None = None
+    while True:
+        page = source.contact_snapshot(
+            limit=page_size,
+            offset=offset,
+            include_groups=False,
+        )
+        if first_page is None:
+            first_page = page
+        elif page["snapshotToken"] != first_page["snapshotToken"]:
+            raise DatabaseSnapshotError("contact database changed while reading snapshot pages")
+        contacts.extend(page["contacts"])
+        if not page["hasMore"]:
+            break
+        offset += len(page["contacts"])
+        if offset <= 0:
+            raise DatabaseSnapshotError("contact snapshot pagination did not advance")
+    assert first_page is not None
+    return {
+        **first_page,
+        "contacts": contacts,
+        "offset": 0,
+        "limit": len(contacts),
+        "total": len(contacts),
+        "hasMore": False,
+    }
+
+
+def emit_contact_snapshot(bridge: BridgeClient, snapshot: dict, dry_run: bool) -> bool:
+    account = snapshot["account"]
+    account_id = account["accountId"]
+    snapshot_token = snapshot["snapshotToken"]
+    base = {
+        "accountId": account_id,
+        "snapshotToken": snapshot_token,
+        "source": account["source"],
+        "platform": account["platform"],
+    }
+    events = [("started", {**base, "phase": "started"})]
+    for contact in snapshot["contacts"]:
+        events.append((contact["username"], {
+            **base,
+            "phase": "contact",
+            "contactId": contact["username"],
+            "displayName": contact["displayName"],
+            "nickName": contact["nickName"],
+            "remark": contact["remark"],
+        }))
+    events.append(("completed", {**base, "phase": "completed", "contactCount": snapshot["total"]}))
+    for suffix, payload in events:
+        event_id = f"contact-snapshot:{account_id}:{snapshot_token}:{suffix}"
+        if dry_run:
+            print(json.dumps(payload, ensure_ascii=False))
+            continue
+        response = bridge.emit_event("contactSnapshotChanged", payload, event_id)
+        if not response.ok:
+            print(f"contact snapshot emit failed: HTTP {response.status} {response.body}", file=sys.stderr)
+            return False
+    return True
 
 
 def build_parser() -> argparse.ArgumentParser:
