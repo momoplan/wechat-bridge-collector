@@ -8,15 +8,14 @@ pipeline {
     }
 
     parameters {
-        string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the release commit')
-        string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to publish')
-        string(name: 'CONNECTOR_VERSION', defaultValue: '3.1.3', description: 'WeChat Connector version')
+        string(name: 'SOURCE_REF', defaultValue: 'main', description: 'Source branch containing the build commit')
+        string(name: 'SOURCE_COMMIT', defaultValue: '', description: 'Exact source commit to validate and package')
+        string(name: 'CONNECTOR_VERSION', defaultValue: '3.1.2', description: 'WeChat Connector version')
         string(name: 'MIN_BRIDGE_VERSION', defaultValue: '0.6.0', description: 'Minimum compatible Bridge Agent version')
-        booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Validate and test without publishing Git refs')
     }
 
     stages {
-        stage('Validate release input') {
+        stage('Validate build input') {
             steps {
                 sh '''#!/bin/bash
 set -euo pipefail
@@ -36,9 +35,10 @@ test "$(jq -r '.runtime.command' connector.json)" = "wechat-bridge-collector-pyt
 test "$(jq -r '.runtime.startPolicy' connector.json)" = "manual"
 test "$(jq -r '.ui.entry' connector.json)" = "ui/index.html"
 test "$(jq -r '.management.auth.type' connector.json)" = "connector_token"
-test "$(sed -n 's/^version = "\\([^"]*\\)"/\\1/p' pyproject.toml | head -1)" = "$CONNECTOR_VERSION"
-test "$(sed -n 's/^__version__ = "\\([^"]*\\)"/\\1/p' wechat_bridge_collector/__init__.py)" = "$CONNECTOR_VERSION"
-test "$(sed -n 's/^version = "\\([^\"]*\\)"/\\1/p' Cargo.toml | head -1)" = "$CONNECTOR_VERSION"
+test "$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml | head -1)" = "$CONNECTOR_VERSION"
+test "$(sed -n 's/^requires-python = "\([^"]*\)"/\1/p' pyproject.toml)" = ">=3.10"
+test "$(sed -n 's/^__version__ = "\([^"]*\)"/\1/p' wechat_bridge_collector/__init__.py)" = "$CONNECTOR_VERSION"
+test "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" = "$CONNECTOR_VERSION"
 test ! -e .gitmodules
 test ! -e bin/macos-x86_64/wechat-bridge-collector
 test -f vendor/wechat-decrypt.upstream.json
@@ -49,17 +49,13 @@ test -f vendor/wechat-decrypt/find_all_keys_windows.py
 test -f vendor/wechat-decrypt/find_all_keys_macos.c
 test ! -e wechat_bridge_collector/scripts/macos/com.baijimu.wechat-bridge-collector.plist
 ! jq -e '.hooks.installAutostart' connector.json >/dev/null
-jq -e . tools/release/baijimu-cli-linux.json >/dev/null
-bash -n tools/release/install-baijimu-cli.sh
-bash -n tools/release/prepare-local-app-release.sh
-bash -n tools/release/register-local-app-release.sh
 case "$CONNECTOR_VERSION" in *[!0-9.]*|'') exit 1 ;; esac
 case "$MIN_BRIDGE_VERSION" in *[!0-9.]*|'') exit 1 ;; esac
 '''
             }
         }
 
-        stage('Test release source') {
+        stage('Test source') {
             steps {
                 sh '''#!/bin/bash
 set -euo pipefail
@@ -87,160 +83,44 @@ test -f ui/session-model.mjs
             }
         }
 
-        stage('Prepare local app registration request') {
+        stage('Package source artifact') {
             steps {
                 sh '''#!/bin/bash
 set -euo pipefail
-release_dir="$WORKSPACE/.release-local-app"
-case "$release_dir" in "$WORKSPACE"/*) ;; *) exit 1 ;; esac
-rm -rf -- "$release_dir"
-mkdir -p "$release_dir"
+artifact_dir="$WORKSPACE/.release-artifacts"
+case "$artifact_dir" in "$WORKSPACE"/*) ;; *) exit 1 ;; esac
+rm -rf -- "$artifact_dir"
+mkdir -p "$artifact_dir"
 
-archive="$release_dir/source.zip"
+archive_name="wechat-bridge-collector-${CONNECTOR_VERSION}-source.zip"
+archive="$artifact_dir/$archive_name"
 git archive --format=zip --prefix="wechat-bridge-collector-${CONNECTOR_VERSION}/" \
   "$SOURCE_COMMIT" -o "$archive"
-repo_url="$(jq -er .source.repo connector.json)"
-archive_url="${repo_url%.git}/archive/v${CONNECTOR_VERSION}.zip"
-tools/release/prepare-local-app-release.sh \
-  "$CONNECTOR_VERSION" connector.json "$archive" "$archive_url" \
-  "$release_dir/request.json"
-jq -e \
-  --arg appId "$(jq -er .appId connector.json)" \
-  --arg version "$CONNECTOR_VERSION" '
-  .manifest.appId == $appId and .version == $version and .sourceType == "archive"
-' "$release_dir/request.json" >/dev/null
+checksum="$(sha256sum "$archive" | awk '{print $1}')"
+printf '%s  %s\n' "$checksum" "$archive_name" > "$archive.sha256"
+
+archive_listing="$(unzip -Z1 "$archive")"
+grep -Eq '/connector[.]json$' <<<"$archive_listing"
+grep -Eq '/pyproject[.]toml$' <<<"$archive_listing"
+grep -Eq '/vendor/wechat-decrypt/key_utils[.]py$' <<<"$archive_listing"
+grep -Eq '/vendor/wechat-decrypt/find_all_keys[.]py$' <<<"$archive_listing"
+grep -Eq '/vendor/wechat-decrypt/find_all_keys_windows[.]py$' <<<"$archive_listing"
+grep -Eq '/vendor/wechat-decrypt/find_all_keys_macos[.]c$' <<<"$archive_listing"
+grep -Eq '/ui/time-range[.]mjs$' <<<"$archive_listing"
+grep -Eq '/ui/session-model[.]mjs$' <<<"$archive_listing"
+unzip -p "$archive" '*/connector.json' | jq -e --arg version "$CONNECTOR_VERSION" \
+  '.version == $version and .source.revision == ("v" + $version)' >/dev/null
+unzip -p "$archive" '*/pyproject.toml' | grep -Fx 'requires-python = ">=3.10"' >/dev/null
+
+jq -n \
+  --arg version "$CONNECTOR_VERSION" \
+  --arg commit "$SOURCE_COMMIT" \
+  --arg file "$archive_name" \
+  --arg checksum "$checksum" \
+  '{version:$version,sourceCommit:$commit,file:$file,sha256:$checksum}' \
+  > "$artifact_dir/build-metadata.json"
 '''
-            }
-        }
-
-        stage('Publish immutable source ref') {
-            when {
-                expression { return !params.DRY_RUN }
-            }
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'github-momoplan-token',
-                        usernameVariable: 'GITHUB_USER',
-                        passwordVariable: 'GITHUB_TOKEN'
-                    ),
-                    usernamePassword(
-                        credentialsId: 'bd5fa0ff-2186-41e4-a7aa-97937ef32c02',
-                        usernameVariable: 'GITEE_USER',
-                        passwordVariable: 'GITEE_TOKEN'
-                    )
-                ]) {
-                    sh '''#!/bin/bash
-set -euo pipefail
-set +x
-askpass="$WORKSPACE/.wechat-release-git-askpass.sh"
-trap 'rm -f "$askpass"' EXIT
-cat > "$askpass" <<'ASKPASS'
-#!/bin/sh
-case "$1" in
-  *Username*) printf '%s\n' "$GIT_AUTH_USER" ;;
-  *Password*) printf '%s\n' "$GIT_AUTH_PASSWORD" ;;
-  *) exit 1 ;;
-esac
-ASKPASS
-chmod 700 "$askpass"
-export GIT_ASKPASS="$askpass"
-export GIT_TERMINAL_PROMPT=0
-
-publish_remote() {
-  remote="$1"
-  current_main="$(git ls-remote "$remote" refs/heads/main | awk 'NR == 1 {print $1}')"
-  if [ -n "$current_main" ] && ! git merge-base --is-ancestor "$current_main" "$SOURCE_COMMIT"; then
-    echo "refusing non-fast-forward publish to main on $remote" >&2
-    exit 1
-  fi
-  git push "$remote" "$SOURCE_COMMIT:refs/heads/main"
-
-  tag="v${CONNECTOR_VERSION}"
-  current_tag="$(git ls-remote "$remote" "refs/tags/$tag" | awk 'NR == 1 {print $1}')"
-  if [ -n "$current_tag" ]; then
-    test "$current_tag" = "$SOURCE_COMMIT"
-  else
-    git push "$remote" "$SOURCE_COMMIT:refs/tags/$tag"
-  fi
-
-  published_refs="$(git ls-remote "$remote" refs/heads/main "refs/tags/$tag")"
-  test "$(printf '%s\n' "$published_refs" | awk '$2 == "refs/heads/main" {print $1}')" = "$SOURCE_COMMIT"
-  test "$(printf '%s\n' "$published_refs" | awk -v tag="refs/tags/$tag" '$2 == tag {print $1}')" = "$SOURCE_COMMIT"
-}
-
-export GIT_AUTH_USER="$GITEE_USER"
-export GIT_AUTH_PASSWORD="$GITEE_TOKEN"
-publish_remote "https://gitee.com/zxflimit_admin/wechat-bridge-collector.git"
-export GIT_AUTH_USER="$GITHUB_USER"
-export GIT_AUTH_PASSWORD="$GITHUB_TOKEN"
-publish_remote "https://github.com/momoplan/wechat-bridge-collector.git"
-'''
-                }
-            }
-        }
-
-        stage('Verify published release archive') {
-            when {
-                expression { return !params.DRY_RUN }
-            }
-            steps {
-                sh '''#!/bin/bash
-set -euo pipefail
-release_dir="$WORKSPACE/.release-local-app"
-case "$release_dir" in "$WORKSPACE"/*) ;; *) exit 1 ;; esac
-test -d "$release_dir"
-
-repo_url="$(jq -er .source.repo connector.json)"
-archive_url="${repo_url%.git}/archive/v${CONNECTOR_VERSION}.zip"
-archive="$release_dir/published.zip"
-curl -fL --retry 8 --retry-all-errors --connect-timeout 10 --max-time 300 \
-  "$archive_url" -o "$archive"
-tools/release/prepare-local-app-release.sh \
-  "$CONNECTOR_VERSION" connector.json "$archive" "$archive_url" \
-  "$release_dir/request.json"
-jq -r '"verified archive sha256=" + .checksum' "$release_dir/request.json"
-'''
-            }
-        }
-
-        stage('Register existing local app version') {
-            when {
-                expression { return !params.DRY_RUN }
-            }
-            steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'wechat-local-app-market-publish-token',
-                        variable: 'LOCAL_APP_MARKET_PUBLISH_TOKEN'
-                    ),
-                    string(
-                        credentialsId: 'wechat-local-app-owner-workspace-id',
-                        variable: 'LOCAL_APP_OWNER_WORKSPACE_ID'
-                    )
-                ]) {
-                    sh '''#!/bin/bash
-set -euo pipefail
-set +x
-release_dir="$WORKSPACE/.release-local-app"
-case "$release_dir" in "$WORKSPACE"/*) ;; *) exit 1 ;; esac
-test -f "$release_dir/request.json"
-cli_dir="$release_dir/baijimu-cli"
-BAIJIMU_CLI="$(tools/release/install-baijimu-cli.sh \
-  tools/release/baijimu-cli-linux.json "$cli_dir")"
-export BAIJIMU_CLI LOCAL_APP_MARKET_PUBLISH_TOKEN LOCAL_APP_OWNER_WORKSPACE_ID
-tools/release/register-local-app-release.sh "$release_dir/request.json" \
-  > "$release_dir/publication.json"
-jq -e \
-  --arg appId "$(jq -er .appId connector.json)" \
-  --arg version "$CONNECTOR_VERSION" '
-  .appId == $appId and .version == $version and
-  (.status == "PENDING_REVIEW" or .status == "PUBLISHED")
-' "$release_dir/publication.json" >/dev/null
-cat "$release_dir/publication.json"
-'''
-                }
-                archiveArtifacts artifacts: '.release-local-app/request.json,.release-local-app/publication.json', fingerprint: true
+                archiveArtifacts artifacts: '.release-artifacts/*', fingerprint: true
             }
         }
     }
@@ -249,9 +129,9 @@ cat "$release_dir/publication.json"
         always {
             sh '''#!/bin/bash
 set -euo pipefail
-release_dir="$WORKSPACE/.release-local-app"
-case "$release_dir" in "$WORKSPACE"/*) ;; *) exit 0 ;; esac
-rm -rf -- "$release_dir"
+artifact_dir="$WORKSPACE/.release-artifacts"
+case "$artifact_dir" in "$WORKSPACE"/*) ;; *) exit 0 ;; esac
+rm -rf -- "$artifact_dir"
 '''
         }
     }

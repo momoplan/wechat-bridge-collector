@@ -18,7 +18,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert not (ROOT / "bin" / "macos-x86_64" / "wechat-bridge-collector").exists()
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "3.1.3"
+    assert manifest["version"] == "3.1.2"
     assert manifest["version"] == __version__
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
     assert manifest["runtime"]["command"].endswith("-python")
@@ -116,13 +116,13 @@ def test_embedded_ui_disables_summary_only_sessions():
     assert 'availability.textContent = "仅摘要"' in app_source
 
 
-def test_release_pipeline_uses_authenticated_remote_verification():
+def test_jenkins_pipeline_only_validates_and_packages_source():
     pipeline = (ROOT / "Jenkinsfile.wechat-release").read_text(encoding="utf-8")
     assert "node --test tests/*.test.mjs" in pipeline
     assert 'git rev-parse refs/remotes/origin/main' in pipeline
-    assert 'published_refs="$(git ls-remote "$remote"' in pipeline
-    assert pipeline.count("git ls-remote") == 3
-    verify_stage = pipeline.split(
-        "stage('Verify published release archive')", maxsplit=1
-    )[1]
-    assert "git ls-remote" not in verify_stage
+    assert "stage('Package source artifact')" in pipeline
+    assert "archiveArtifacts" in pipeline
+    assert "git push" not in pipeline
+    assert "git ls-remote" not in pipeline
+    assert "withCredentials" not in pipeline
+    assert "local-app publish" not in pipeline

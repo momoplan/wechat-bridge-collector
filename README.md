@@ -6,7 +6,7 @@
 
 从 `0.6.0` 起 Connector 在百积木应用详情中提供完整的首次运行引导：无密钥时服务仍会启动，用户可在界面中自动获取、导入已有 `all_keys.json` 或重新检测，成功后无需重启即可浏览最近会话、联系人和聊天记录。界面只通过清单声明的 management operation 调用本机服务；所有 `/management/v1/*` 请求都要求 Bridge Agent 管理的私有 Connector token。
 
-从 `0.7.0` 起，百积木只保存客户 Python 解释器的绝对路径，并为本 Connector 创建独立的 `.bridge-agent-python` 虚拟环境；依赖严格按 `requirements.lock` 安装，不写入客户的全局 Python。从 `3.1.2` 起，Connector 恢复支持 Python 3.10 及以上版本，不再把运行环境限定为 Python 3.12.x。`3.1.3` 延续该兼容范围，并把不可变 Git tag 归档登记到现有本地应用身份。
+从 `0.7.0` 起，百积木只保存客户 Python 解释器的绝对路径，并为本 Connector 创建独立的 `.bridge-agent-python` 虚拟环境；依赖严格按 `requirements.lock` 安装，不写入客户的全局 Python。从 `3.1.2` 起，Connector 恢复支持 Python 3.10 及以上版本，不再把运行环境限定为 Python 3.12.x。
 
 从 `1.0.1` 起，Connector 使用的 `wechat-decrypt` 固定源码作为普通文件随仓库和标签归档一起发布，不再依赖 Git submodule，也不要求用户额外克隆依赖仓库。
 
@@ -44,7 +44,7 @@ collector 不直接连接 relay，也不修改微信数据。
 
 ```bash
 baijimu local-app install \
-  'https://github.com/momoplan/wechat-bridge-collector.git#v3.1.3' \
+  'https://github.com/momoplan/wechat-bridge-collector.git#v3.1.2' \
   --replace
 ```
 
