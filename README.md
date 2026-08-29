@@ -22,6 +22,8 @@
 
 从 `3.0.0` 起，Connector 迁移到 Bridge Agent `3.0.0` 本地应用协议：应用身份改由平台注册的 `appId` 和宿主环境提供，事件请求使用 `appId`，私有数据、管理凭证和事件凭证统一使用 `BAIJIMU_LOCAL_APP_*` 契约。本版本要求 Bridge Agent `0.6.0` 或更高版本，不兼容旧宿主协议。
 
+从 `3.1.3` 起，权威源码和标签发布到 Gitee，并同步 GitHub 镜像；百积木登记的安装归档使用 `download.baijimu.com` 国内公共 OSS 内容寻址地址，不再让客户安装器直接下载 GitHub/Gitee 归档。
+
 macOS 上由签名后的百积木桌面应用作为权限宿主启动 Python 子进程。Connector 不再安装或加载 LaunchAgent；这是为了让微信沙盒数据库的访问权限稳定归属到“百积木”，而不是归属到一个无稳定签名身份的独立 Python/launchd 进程。
 
 ## 架构
@@ -44,11 +46,12 @@ collector 不直接连接 relay，也不修改微信数据。
 
 ```bash
 baijimu local-app install \
-  'https://github.com/momoplan/wechat-bridge-collector.git#v3.1.2' \
+  36d35399-a0cd-11f1-8622-00163e3536cb \
+  --version 3.1.3 \
   --replace
 ```
 
-该版本以个人工作区登记的 DRAFT 版本进行开发分发，不提交公开市场审核。安装时客户端会提示“注册不等于公开审核”，并向平台注册中心校验 appId、版本、revision 和 SHA-256。
+安装命令只使用平台注册的不可变版本，不接受调用方覆盖下载地址。安装器会校验 appId、版本、revision 和 SHA-256；审核状态由平台版本记录决定。
 
 安装器读取 `schemaVersion: "3.0.0"` 的 `connector.json`，以
 `appId=36d35399-a0cd-11f1-8622-00163e3536cb` 创建一个本地应用。methods、events、
@@ -70,7 +73,7 @@ businessId。安装后按下面顺序操作：
 3. 克隆本仓库：
 
 ```bash
-git clone https://github.com/momoplan/wechat-bridge-collector.git
+git clone https://gitee.com/zxflimit_admin/wechat-bridge-collector.git
 cd wechat-bridge-collector
 ```
 

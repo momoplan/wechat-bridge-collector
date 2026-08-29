@@ -18,8 +18,9 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert not (ROOT / "bin" / "macos-x86_64" / "wechat-bridge-collector").exists()
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "3.1.2"
+    assert manifest["version"] == "3.1.3"
     assert manifest["version"] == __version__
+    assert manifest["source"]["repo"] == "https://gitee.com/zxflimit_admin/wechat-bridge-collector.git"
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
     assert manifest["runtime"]["command"].endswith("-python")
     assert manifest["hostRequirements"] == {
@@ -119,6 +120,8 @@ def test_embedded_ui_disables_summary_only_sessions():
 def test_jenkins_pipeline_only_validates_and_packages_source():
     pipeline = (ROOT / "Jenkinsfile.wechat-release").read_text(encoding="utf-8")
     assert "node --test tests/*.test.mjs" in pipeline
+    assert "cargo fmt --check" in pipeline
+    assert "cargo test --locked" in pipeline
     assert 'git rev-parse refs/remotes/origin/main' in pipeline
     assert "stage('Package source artifact')" in pipeline
     assert "archiveArtifacts" in pipeline
