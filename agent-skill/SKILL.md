@@ -33,7 +33,7 @@ version: "2.0.0"
 - collector 默认目录：`~/baijimu-wechat-bridge/wechat-bridge-collector`
 - collector 状态目录：`~/.wechat-bridge-collector`
 - collector 服务名：`wechatLocal`
-- collector 事件名：`messageReceived`
+- collector 事件名：`messageReceived`；payload 的 `accountId` 标识归属工作微信账号
 - collector method server：`http://127.0.0.1:18082`
 - bridge-agent：`http://127.0.0.1:18081`
 - 旧版 macOS LaunchAgent（必须迁移删除）：`~/Library/LaunchAgents/com.baijimu.wechat-bridge-collector.plist`

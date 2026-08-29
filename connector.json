@@ -2,7 +2,7 @@
   "schemaVersion": "3.0.0",
   "appId": "36d35399-a0cd-11f1-8622-00163e3536cb",
   "name": "WeChat Connector",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
   "publisher": {
     "name": "Baijimu",
@@ -11,7 +11,7 @@
   "source": {
     "type": "git",
     "repo": "https://github.com/momoplan/wechat-bridge-collector.git",
-    "revision": "v3.1.0"
+    "revision": "v3.1.1"
   },
   "runtime": {
     "type": "process",
@@ -457,6 +457,7 @@
         "type": "object",
         "description": "Payload emitted for each WeChat message observed in the local database.",
         "required": [
+          "accountId",
           "messageId",
           "dbPath",
           "tableName",
@@ -474,6 +475,10 @@
           "platform"
         ],
         "properties": {
+          "accountId": {
+            "type": "string",
+            "description": "Current local WeChat account ID owning the work device event."
+          },
           "messageId": {
             "type": "string",
             "description": "Stable collector message ID formatted as dbPath:tableName:localId."

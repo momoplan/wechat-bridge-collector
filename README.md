@@ -165,7 +165,7 @@ Connector 的 `runtime.startPolicy` 是 `manual`。Bridge Agent 构建运行时�
 默认本地应用和事件名：
 
 - appId: `36d35399-a0cd-11f1-8622-00163e3536cb`
-- event: `messageReceived`
+- event: `messageReceived`，携带归属工作微信 `accountId`，用于按工作手机/销售归属处理消息
 - event: `contactSnapshotChanged`，按 `started/contact/completed` 顺序同步直接好友快照
 
 payload 示例：
