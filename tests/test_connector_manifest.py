@@ -18,7 +18,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert not (ROOT / "bin" / "macos-x86_64" / "wechat-bridge-collector").exists()
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "3.1.1"
+    assert manifest["version"] == "3.1.2"
     assert manifest["version"] == __version__
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
     assert manifest["runtime"]["command"].endswith("-python")
@@ -32,7 +32,7 @@ def test_connector_manifest_declares_local_app_capabilities():
         "database": "not_applicable",
     }
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'requires-python = ">=3.12,<3.13"' in pyproject
+    assert 'requires-python = ">=3.10"' in pyproject
     assert (ROOT / "requirements.lock").read_text(encoding="utf-8").splitlines() == [
         "pycryptodome==3.23.0",
         "zstandard==0.25.0",

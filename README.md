@@ -6,7 +6,7 @@
 
 从 `0.6.0` 起 Connector 在百积木应用详情中提供完整的首次运行引导：无密钥时服务仍会启动，用户可在界面中自动获取、导入已有 `all_keys.json` 或重新检测，成功后无需重启即可浏览最近会话、联系人和聊天记录。界面只通过清单声明的 management operation 调用本机服务；所有 `/management/v1/*` 请求都要求 Bridge Agent 管理的私有 Connector token。
 
-从 `0.7.0` 起运行环境统一为客户安装的 Python 3.12.x。百积木只保存解释器绝对路径，并为本 Connector 创建独立的 `.bridge-agent-python` 虚拟环境；依赖严格按 `requirements.lock` 安装，不写入客户的全局 Python。
+从 `0.7.0` 起，百积木只保存客户 Python 解释器的绝对路径，并为本 Connector 创建独立的 `.bridge-agent-python` 虚拟环境；依赖严格按 `requirements.lock` 安装，不写入客户的全局 Python。从 `3.1.2` 起，Connector 恢复支持 Python 3.10 及以上版本，不再把运行环境限定为 Python 3.12.x。
 
 从 `1.0.1` 起，Connector 使用的 `wechat-decrypt` 固定源码作为普通文件随仓库和标签归档一起发布，不再依赖 Git submodule，也不要求用户额外克隆依赖仓库。
 
@@ -44,7 +44,7 @@ collector 不直接连接 relay，也不修改微信数据。
 
 ```bash
 baijimu local-app install \
-  'https://github.com/momoplan/wechat-bridge-collector.git#v3.1.0' \
+  'https://github.com/momoplan/wechat-bridge-collector.git#v3.1.2' \
   --replace
 ```
 
@@ -66,7 +66,7 @@ businessId。安装后按下面顺序操作：
 ## 前置条件
 
 1. 安装并运行 `bridge-agent`。
-2. 安装 Python 3.12.x，并在百积木“设置 > 运行环境”中检测、选择并保存 Python 3.12 的绝对路径。
+2. 安装 Python 3.10 或更高版本，并在百积木“设置 > 运行环境”中检测、选择并保存兼容解释器的绝对路径。
 3. 克隆本仓库：
 
 ```bash
@@ -96,7 +96,7 @@ macOS 首次提取 key 可能需要管理员权限；如果系统拦截 `task_fo
 从源码安装 Python collector：
 
 ```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.lock
 ```
 
