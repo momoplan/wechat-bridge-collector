@@ -1,3 +1,4 @@
+import ctypes
 import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -10,6 +11,7 @@ from wechat_bridge_collector.autostart import (
     _read_pid,
     _rotate_log,
     _terminate_windows_process_tree,
+    _windows_process_running,
     install_autostart,
     start_command,
     start_collector,
@@ -37,14 +39,43 @@ def test_read_pid_rejects_stale_process(tmp_path: Path):
         assert _read_pid(pid_path) is None
 
 
-def test_windows_invalid_pid_error_is_not_running():
-    error = OSError("invalid process id")
-    error.winerror = 87
+def test_windows_process_probe_does_not_use_os_kill():
     with (
         patch("wechat_bridge_collector.autostart.platform.system", return_value="Windows"),
-        patch("wechat_bridge_collector.autostart.os.kill", side_effect=error),
+        patch(
+            "wechat_bridge_collector.autostart._windows_process_running", return_value=False
+        ) as windows_probe,
+        patch("wechat_bridge_collector.autostart.os.kill") as kill,
     ):
         assert _process_running(12345) is False
+    windows_probe.assert_called_once_with(12345)
+    kill.assert_not_called()
+
+
+def test_windows_process_probe_reads_exit_code_without_signaling():
+    kernel32 = Mock()
+    kernel32.OpenProcess.return_value = 123
+
+    def set_still_active(_handle, exit_code):
+        exit_code._obj.value = 259
+        return True
+
+    kernel32.GetExitCodeProcess.side_effect = set_still_active
+    with patch.object(ctypes, "WinDLL", return_value=kernel32, create=True):
+        assert _windows_process_running(12345) is True
+
+    kernel32.OpenProcess.assert_called_once_with(0x1000, False, 12345)
+    kernel32.CloseHandle.assert_called_once_with(123)
+
+
+def test_windows_process_probe_treats_invalid_pid_as_stopped():
+    kernel32 = Mock()
+    kernel32.OpenProcess.return_value = 0
+    with (
+        patch.object(ctypes, "WinDLL", return_value=kernel32, create=True),
+        patch.object(ctypes, "get_last_error", return_value=87, create=True),
+    ):
+        assert _windows_process_running(12345) is False
 
 
 def test_non_windows_os_error_remains_visible():

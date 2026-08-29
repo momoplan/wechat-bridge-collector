@@ -243,6 +243,8 @@ def _write_pid(path: Path, pid: int) -> None:
 
 
 def _process_running(pid: int) -> bool:
+    if platform.system().lower() == "windows":
+        return _windows_process_running(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -250,14 +252,40 @@ def _process_running(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    except OSError as exc:
-        # Windows reports a missing PID as a generic OSError with
-        # ERROR_INVALID_PARAMETER (87), rather than ProcessLookupError.
-        # Treat only that documented value as a stale process; unexpected
-        # failures must remain visible instead of being mistaken for success.
-        if platform.system().lower() == "windows" and exc.winerror == 87:
+
+
+def _windows_process_running(pid: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    process_query_limited_information = 0x1000
+    error_access_denied = 5
+    error_invalid_parameter = 87
+    still_active = 259
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == error_invalid_parameter:
             return False
-        raise
+        if error == error_access_denied:
+            return True
+        raise ctypes.WinError(error)
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _collector_process_matches(pid: int) -> bool:
