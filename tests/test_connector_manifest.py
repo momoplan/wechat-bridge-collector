@@ -120,6 +120,12 @@ def test_embedded_ui_disables_summary_only_sessions():
 def test_jenkins_pipeline_only_validates_and_packages_source():
     pipeline = (ROOT / "Jenkinsfile.wechat-release").read_text(encoding="utf-8")
     job_config = (ROOT / "jenkins-wechat-release.xml").read_text(encoding="utf-8")
+    assert "agent { label 'artifact-builder' }" in pipeline
+    assert "agent any" not in pipeline
+    assert "label 'built-in'" not in pipeline
+    assert "label 'artifact-small'" not in pipeline
+    assert "label 'artifact-rust'" not in pipeline
+    assert "label 'artifact-heavy'" not in pipeline
     assert "node --test tests/*.test.mjs" in pipeline
     assert 'git rev-parse refs/remotes/origin/main' in pipeline
     assert "stage('Package source artifact')" in pipeline
