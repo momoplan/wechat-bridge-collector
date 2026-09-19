@@ -599,23 +599,42 @@ impl WeChatSource {
             .collect()
     }
 
-    fn contacts(&self, query: &str, limit: usize) -> Vec<Value> {
+    fn contacts(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+        include_groups: bool,
+    ) -> Vec<Value> {
         let query = query.trim().to_lowercase();
         let mut contacts = self
             .all_contacts()
             .0
             .into_iter()
             .filter(|item| {
-                query.is_empty()
-                    || ["username", "displayName", "nickName", "remark"]
-                        .iter()
-                        .any(|key| {
-                            item.get(*key)
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_lowercase()
-                                .contains(&query)
-                        })
+                let is_group = item
+                    .get("isGroup")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let is_current_member = item
+                    .get("isCurrentMember")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let is_deleted = item
+                    .get("isDeleted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                (!is_group || (include_groups && is_current_member && !is_deleted))
+                    && (query.is_empty()
+                        || ["username", "displayName", "nickName", "remark"]
+                            .iter()
+                            .any(|key| {
+                                item.get(*key)
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_lowercase()
+                                    .contains(&query)
+                            }))
             })
             .collect::<Vec<_>>();
         contacts.sort_by(|a, b| {
@@ -642,8 +661,11 @@ impl WeChatSource {
                     )
             })
         });
-        contacts.truncate(normalize_limit(limit, 100_000));
         contacts
+            .into_iter()
+            .skip(offset)
+            .take(normalize_limit(limit, 100_000))
+            .collect()
     }
 
     fn all_contacts(&self) -> (Vec<Value>, Option<FileSig2>) {
@@ -661,37 +683,49 @@ impl WeChatSource {
         }
         let mut contacts = Vec::new();
         if let Ok(conn) = Connection::open(&path) {
-            if let Ok(mut stmt) = conn.prepare("SELECT username, nick_name, remark FROM contact") {
-                if let Ok(rows) = stmt.query_map([], |row| {
-                    let username: String = row.get(0)?;
-                    let nick: Option<String> = row.get(1)?;
-                    let remark: Option<String> = row.get(2)?;
-                    Ok((
-                        username,
-                        nick.unwrap_or_default(),
-                        remark.unwrap_or_default(),
-                    ))
-                }) {
-                    for row in rows.flatten() {
-                        if row.0.is_empty() {
-                            continue;
-                        }
-                        let display = if !row.2.is_empty() {
-                            row.2.clone()
-                        } else if !row.1.is_empty() {
-                            row.1.clone()
-                        } else {
-                            row.0.clone()
-                        };
-                        contacts.push(json!({
-                            "username": row.0,
-                            "displayName": display,
-                            "nickName": row.1,
-                            "remark": row.2,
-                            "isGroup": row.0.contains("@chatroom"),
-                        }));
-                    }
+            let rows = query_contact_rows(&conn).unwrap_or_default();
+            let group_members = query_group_members(&conn);
+            let account_id = self
+                .db_dir
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .to_string();
+            for row in rows {
+                let username = row.username.trim().to_string();
+                if username.is_empty() {
+                    continue;
                 }
+                let nick = row.nick.trim().to_string();
+                let remark = row.remark.trim().to_string();
+                let is_group = username.contains("@chatroom");
+                let members = if is_group {
+                    group_members.get(&row.id).cloned().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                let member_names = member_display_names(&members, &account_id);
+                let (display, display_name_source) = if !remark.is_empty() {
+                    (remark.clone(), "remark")
+                } else if !nick.is_empty() {
+                    (nick.clone(), "nickname")
+                } else if !member_names.is_empty() {
+                    (format_group_member_name(&member_names, 4), "members")
+                } else {
+                    (username.clone(), "username")
+                };
+                contacts.push(json!({
+                    "username": username,
+                    "displayName": display,
+                    "displayNameSource": display_name_source,
+                    "nickName": nick,
+                    "remark": remark,
+                    "isGroup": is_group,
+                    "isCurrentMember": !is_group || row.is_in_chat_room,
+                    "isDeleted": row.is_deleted,
+                    "memberCount": if is_group { Some(members.len()) } else { None },
+                }));
             }
         }
         if let Ok(mut cache) = self.contacts_cache.lock() {
@@ -1309,6 +1343,114 @@ struct SessionRow {
     last_sender_display_name: String,
 }
 
+#[derive(Default)]
+struct ContactRow {
+    id: i64,
+    username: String,
+    nick: String,
+    remark: String,
+    is_deleted: bool,
+    is_in_chat_room: bool,
+}
+
+fn query_contact_rows(conn: &Connection) -> rusqlite::Result<Vec<ContactRow>> {
+    query_contact_rows_with_sql(
+        conn,
+        "SELECT id, username, nick_name, remark, delete_flag, is_in_chat_room FROM contact",
+        true,
+    )
+    .or_else(|_| {
+        query_contact_rows_with_sql(
+            conn,
+            "SELECT rowid, username, nick_name, remark, 0, 1 FROM contact",
+            false,
+        )
+    })
+}
+
+fn query_contact_rows_with_sql(
+    conn: &Connection,
+    sql: &str,
+    has_membership_state: bool,
+) -> rusqlite::Result<Vec<ContactRow>> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map([], |row| {
+        Ok(ContactRow {
+            id: row.get(0)?,
+            username: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+            nick: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            remark: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            is_deleted: row.get::<_, i64>(4).unwrap_or(0) != 0,
+            is_in_chat_room: !has_membership_state || row.get::<_, i64>(5).unwrap_or(1) != 0,
+        })
+    })?;
+    rows.collect()
+}
+
+fn query_group_members(conn: &Connection) -> HashMap<i64, Vec<(String, String)>> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT relation.room_id, member.username, member.remark, member.nick_name \
+         FROM chatroom_member relation \
+         JOIN contact member ON member.id = relation.member_id \
+         ORDER BY relation.room_id, relation.rowid",
+    ) else {
+        return HashMap::new();
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        let username = row.get::<_, Option<String>>(1)?.unwrap_or_default();
+        let remark = row.get::<_, Option<String>>(2)?.unwrap_or_default();
+        let nick = row.get::<_, Option<String>>(3)?.unwrap_or_default();
+        let display = if !remark.trim().is_empty() {
+            remark.trim().to_string()
+        } else {
+            nick.trim().to_string()
+        };
+        Ok((row.get::<_, i64>(0)?, username.trim().to_string(), display))
+    }) else {
+        return HashMap::new();
+    };
+    let mut groups = HashMap::new();
+    for row in rows.flatten() {
+        groups
+            .entry(row.0)
+            .or_insert_with(Vec::new)
+            .push((row.1, row.2));
+    }
+    groups
+}
+
+fn member_display_names(members: &[(String, String)], account_id: &str) -> Vec<String> {
+    let mut names = members
+        .iter()
+        .filter(|(username, name)| !name.is_empty() && username != account_id)
+        .map(|(_, name)| name.clone())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        names = members
+            .iter()
+            .filter(|(_, name)| !name.is_empty())
+            .map(|(_, name)| name.clone())
+            .collect();
+    }
+    let mut seen = HashSet::new();
+    names.retain(|name| seen.insert(name.clone()));
+    names
+}
+
+fn format_group_member_name(names: &[String], maximum_names: usize) -> String {
+    let visible = names
+        .iter()
+        .take(maximum_names)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("、");
+    if names.len() > maximum_names {
+        format!("{visible}等{}人", names.len())
+    } else {
+        visible
+    }
+}
+
 fn main() {
     if let Err(error) = run(env::args().skip(1).collect()) {
         eprintln!("{error}");
@@ -1636,10 +1778,17 @@ fn dispatch_method(source: &WeChatSource, method: &str, payload: &Value) -> Resu
         }
         "getContacts" => {
             let limit = value_usize(obj.get("limit"), 50);
+            let offset = value_usize(obj.get("offset"), 0);
             let query = obj.get("query").and_then(Value::as_str).unwrap_or("");
-            Ok(
-                json!({"contacts": source.contacts(query, limit), "limit": normalize_limit(limit, 500)}),
-            )
+            let include_groups = obj
+                .get("includeGroups")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            Ok(json!({
+                "contacts": source.contacts(query, limit, offset, include_groups),
+                "limit": normalize_limit(limit, 500),
+                "offset": offset,
+            }))
         }
         "getChatHistory" => source.get_chat_history(
             require_string(obj, "conversationId")?,

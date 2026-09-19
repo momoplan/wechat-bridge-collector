@@ -579,6 +579,10 @@ class WeChatSource:
         for item in all_contacts:
             if not include_groups and item["isGroup"]:
                 continue
+            if item["isGroup"] and (
+                item.get("isCurrentMember") is False or item.get("isDeleted") is True
+            ):
+                continue
             if query_l and not any(
                 query_l in str(value or "").lower()
                 for value in (item["username"], item["displayName"], item["nickName"], item["remark"])
@@ -597,7 +601,18 @@ class WeChatSource:
         include_groups: bool = False,
     ) -> dict[str, Any]:
         all_contacts, signature = self._all_contacts()
-        filtered = [item for item in all_contacts if include_groups or not item["isGroup"]]
+        filtered = [
+            item
+            for item in all_contacts
+            if (include_groups or not item["isGroup"])
+            and (
+                not item["isGroup"]
+                or (
+                    item.get("isCurrentMember") is not False
+                    and item.get("isDeleted") is not True
+                )
+            )
+        ]
         filtered.sort(key=lambda item: (not item["remark"], item["displayName"].lower()))
         normalized_offset = normalize_offset(offset)
         normalized_limit = normalize_limit(limit, 500)
@@ -623,23 +638,94 @@ class WeChatSource:
                 return cached[1], signature
             with closing(sqlite3.connect(path)) as conn:
                 try:
-                    rows = conn.execute("SELECT username, nick_name, remark FROM contact").fetchall()
+                    columns = {
+                        str(row[1])
+                        for row in conn.execute("PRAGMA table_info(contact)").fetchall()
+                    }
+                    id_column = "id" if "id" in columns else "rowid"
+                    delete_column = "delete_flag" if "delete_flag" in columns else "0"
+                    membership_column = "is_in_chat_room" if "is_in_chat_room" in columns else "1"
+                    rows = conn.execute(
+                        f"""
+                        SELECT {id_column}, username, nick_name, remark,
+                               {delete_column}, {membership_column}
+                        FROM contact
+                        """
+                    ).fetchall()
                 except sqlite3.Error:
                     return [], signature
+                group_members = self._group_members(conn)
         contacts = []
-        for username, nick, remark in rows:
+        for contact_id, username, nick, remark, delete_flag, is_in_chat_room in rows:
             if not username:
                 continue
-            display = remark or nick or username
+            username = str(username).strip()
+            if not username:
+                continue
+            nick = str(nick or "").strip()
+            remark = str(remark or "").strip()
+            is_group = "@chatroom" in username
+            members = group_members.get(int(contact_id), []) if is_group else []
+            member_names = self._member_display_names(members)
+            if remark:
+                display = remark
+                display_name_source = "remark"
+            elif nick:
+                display = nick
+                display_name_source = "nickname"
+            elif member_names:
+                display = format_group_member_name(member_names)
+                display_name_source = "members"
+            else:
+                display = username
+                display_name_source = "username"
             contacts.append({
                 "username": username,
                 "displayName": display,
-                "nickName": nick or "",
-                "remark": remark or "",
-                "isGroup": "@chatroom" in username,
+                "displayNameSource": display_name_source,
+                "nickName": nick,
+                "remark": remark,
+                "isGroup": is_group,
+                "isCurrentMember": not is_group or bool(is_in_chat_room),
+                "isDeleted": bool(delete_flag),
+                "memberCount": len(members) if is_group else None,
             })
         self._contacts_cache = (signature, contacts)
         return contacts, signature
+
+    def _group_members(self, conn: sqlite3.Connection) -> dict[int, list[tuple[str, str]]]:
+        try:
+            rows = conn.execute(
+                """
+                SELECT relation.room_id,
+                       member.username,
+                       member.remark,
+                       member.nick_name
+                FROM chatroom_member relation
+                JOIN contact member ON member.id = relation.member_id
+                ORDER BY relation.room_id, relation.rowid
+                """
+            ).fetchall()
+        except sqlite3.Error:
+            return {}
+
+        groups: dict[int, list[tuple[str, str]]] = {}
+        for room_id, username, remark, nick in rows:
+            member_username = str(username or "").strip()
+            member_name = str(remark or "").strip() or str(nick or "").strip()
+            groups.setdefault(int(room_id), []).append((member_username, member_name))
+        return groups
+
+    def _member_display_names(self, members: list[tuple[str, str]]) -> list[str]:
+        account_id = Path(self.db_dir).parent.name.strip()
+        candidates = [
+            name
+            for username, name in members
+            if name and username != account_id
+        ]
+        if not candidates:
+            candidates = [name for _username, name in members if name]
+        return list(dict.fromkeys(candidates))
 
     def read_session_state(self) -> dict[str, int]:
         rel_key = os.path.join("session", "session.db")
@@ -1400,6 +1486,14 @@ def normalize_offset(value: Any) -> int:
     except (TypeError, ValueError):
         offset = 0
     return max(0, offset)
+
+
+def format_group_member_name(names: list[str], maximum_names: int = 4) -> str:
+    visible = names[:maximum_names]
+    label = "、".join(visible)
+    if len(names) > maximum_names:
+        return f"{label}等{len(names)}人"
+    return label
 
 
 def timestamp_to_iso(timestamp: int) -> str | None:

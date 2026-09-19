@@ -28,6 +28,8 @@
 
 从 `3.1.5` 起，Windows 进程存活探测改用只读 Win32 句柄与退出码查询，不再调用不受 Windows 支持的 `os.kill(pid, 0)`，确保停止命令能够保留 PID 身份并回收完整进程树。
 
+从 `3.1.6` 起，未设置显式群名的微信群会根据当前成员联系人名称生成展示名；群查询支持稳定分页，并排除已退出或已删除的历史群聊。
+
 macOS 上由签名后的百积木桌面应用作为权限宿主启动 Python 子进程。Connector 不再安装或加载 LaunchAgent；这是为了让微信沙盒数据库的访问权限稳定归属到“百积木”，而不是归属到一个无稳定签名身份的独立 Python/launchd 进程。
 
 ## 架构
@@ -51,7 +53,7 @@ collector 不直接连接 relay，也不修改微信数据。
 ```bash
 baijimu local-app install \
   36d35399-a0cd-11f1-8622-00163e3536cb \
-  --version 3.1.5 \
+  --version 3.1.6 \
   --replace
 ```
 

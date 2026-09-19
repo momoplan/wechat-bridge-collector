@@ -72,9 +72,17 @@ import sqlite3
 from pathlib import Path
 db_dir = Path(${JSON.stringify(dbDir)})
 conn = sqlite3.connect(db_dir / "contact" / "contact.db")
-conn.execute("CREATE TABLE contact(username TEXT, nick_name TEXT, remark TEXT)")
-conn.execute("INSERT INTO contact VALUES ('alice', 'Alice Nick', 'Alice Remark')")
-conn.execute("INSERT INTO contact VALUES ('room@chatroom', 'Room', '')")
+conn.execute("CREATE TABLE contact(id INTEGER PRIMARY KEY, username TEXT, nick_name TEXT, remark TEXT, delete_flag INTEGER, is_in_chat_room INTEGER)")
+conn.execute("CREATE TABLE chatroom_member(room_id INTEGER, member_id INTEGER)")
+conn.execute("INSERT INTO contact VALUES (1, 'alice', 'Alice Nick', 'Alice Remark', 0, 0)")
+conn.execute("INSERT INTO contact VALUES (2, 'bob', 'Bob Nick', '', 0, 0)")
+conn.execute("INSERT INTO contact VALUES (10, 'room@chatroom', '', '', 0, 1)")
+conn.execute("INSERT INTO contact VALUES (11, 'old-room@chatroom', '', '', 0, 0)")
+conn.execute("INSERT INTO contact VALUES (12, 'deleted-room@chatroom', '', '', 1, 1)")
+conn.execute("INSERT INTO chatroom_member VALUES (10, 1)")
+conn.execute("INSERT INTO chatroom_member VALUES (10, 2)")
+conn.execute("INSERT INTO chatroom_member VALUES (11, 1)")
+conn.execute("INSERT INTO chatroom_member VALUES (12, 2)")
 conn.commit(); conn.close()
 conn = sqlite3.connect(db_dir / "session" / "session.db")
 conn.execute("CREATE TABLE SessionTable(username TEXT, unread_count INTEGER, summary TEXT, last_timestamp INTEGER, last_msg_type INTEGER, last_msg_sender TEXT, last_sender_display_name TEXT)")
@@ -163,6 +171,15 @@ test("rust method server serves WeChat query methods from local SQLite snapshots
 
     const contacts = await postJson(port, "/invoke/getContacts", { query: "alice", limit: 5 });
     assert.equal(contacts.contacts[0].displayName, "Alice Remark");
+
+    const groups = await postJson(port, "/invoke/getContacts", { query: "@chatroom", limit: 5, offset: 0 });
+    assert.equal(groups.contacts.length, 1);
+    assert.equal(groups.contacts[0].username, "room@chatroom");
+    assert.equal(groups.contacts[0].displayName, "Alice Remark、Bob Nick");
+    assert.equal(groups.contacts[0].displayNameSource, "members");
+    assert.equal(groups.contacts[0].memberCount, 2);
+    const emptyPage = await postJson(port, "/invoke/getContacts", { query: "@chatroom", limit: 5, offset: 1 });
+    assert.equal(emptyPage.contacts.length, 0);
 
     const history = await postJson(port, "/invoke/getChatHistory", { conversationId: "alice", limit: 5, oldestFirst: true });
     assert.equal(history.conversation.conversationName, "Alice Remark");
