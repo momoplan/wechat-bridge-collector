@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0.0",
+  "targets": [
+    {
+      "platform": "macos",
+      "architecture": "universal"
+    },
+    {
+      "platform": "windows",
+      "architecture": "universal"
+    },
+    {
+      "platform": "linux",
+      "architecture": "universal"
+    }
+  ]
+}

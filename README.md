@@ -30,6 +30,8 @@
 
 从 `3.1.6` 起，未设置显式群名的微信群会根据当前成员联系人名称生成展示名；群查询支持稳定分页，并排除已退出或已删除的历史群聊。
 
+从 `3.1.7` 起，公开市场版本把同一份纯源码归档显式声明为 macOS、Windows 和 Linux 的通用制品，确保 Bridge Agent 能按当前平台解析并安装已审核版本。
+
 macOS 上由签名后的百积木桌面应用作为权限宿主启动 Python 子进程。Connector 不再安装或加载 LaunchAgent；这是为了让微信沙盒数据库的访问权限稳定归属到“百积木”，而不是归属到一个无稳定签名身份的独立 Python/launchd 进程。
 
 ## 架构
@@ -53,11 +55,30 @@ collector 不直接连接 relay，也不修改微信数据。
 ```bash
 baijimu local-app install \
   36d35399-a0cd-11f1-8622-00163e3536cb \
-  --version 3.1.6 \
+  --version 3.1.7 \
   --replace
 ```
 
 安装命令只使用平台注册的不可变版本，不接受调用方覆盖下载地址。安装器会校验 appId、版本、revision 和 SHA-256；审核状态由平台版本记录决定。
+
+发布时先上传 Jenkins 生成并校验过的源码 ZIP，再由仓库脚本生成完整 `VersionContent`。平台目标来自版本化的 `release/distribution-targets.json`；同一不可变源码 artifact 可以服务多个平台，但不得再登记为宿主无法选择的 `source/source` 目标。
+执行前必须从平台应用记录核对并选择准确的来源工作区，不能把工作区 ID 固化到发布脚本或文档中。
+
+```bash
+baijimu local-app artifact upload \
+  36d35399-a0cd-11f1-8622-00163e3536cb \
+  --file wechat-bridge-collector-3.1.7-source.zip \
+  --json > artifact-receipt.json
+
+python3 tools/build_version_content.py \
+  --manifest connector.json \
+  --artifact-receipt artifact-receipt.json \
+  --output version-content.json
+
+baijimu local-app version freeze \
+  36d35399-a0cd-11f1-8622-00163e3536cb 3.1.7 \
+  --data @version-content.json
+```
 
 安装器读取 `schemaVersion: "3.0.0"` 的 `connector.json`，以
 `appId=36d35399-a0cd-11f1-8622-00163e3536cb` 创建一个本地应用。methods、events、
