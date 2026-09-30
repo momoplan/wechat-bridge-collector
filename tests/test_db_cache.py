@@ -1,3 +1,4 @@
+import json
 import shutil
 import sqlite3
 import struct
@@ -5,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +19,68 @@ from wechat_bridge_collector.wechat_source import (
 
 
 class DBCacheTest(unittest.TestCase):
+    def test_contact_and_message_databases_refresh_concurrently_and_keep_both_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_dir = root / "db_storage"
+            keys = ["contact/contact.db", "message/message_0.db"]
+            for key in keys:
+                path = db_dir / key
+                path.parent.mkdir(parents=True)
+                self._write_sqlite_db(path)
+            cache = DBCache({key: {"enc_key": "00" * 32} for key in keys}, str(db_dir))
+            cache.cache_dir = root / "cache"
+            cache._metadata_path = cache.cache_dir / "_snapshots.json"
+            cache._cache.clear()
+            barrier = threading.Barrier(2, timeout=3)
+
+            def decrypt(source, output, _key):
+                barrier.wait()
+                shutil.copyfile(source, output)
+
+            with patch("wechat_bridge_collector.wechat_source.full_decrypt", decrypt), \
+                 ThreadPoolExecutor(max_workers=2) as workers:
+                paths = list(workers.map(cache.get, keys))
+            self.assertTrue(all(Path(path).is_file() for path in paths))
+            self.assertEqual(set(json.loads(cache._metadata_path.read_text())), set(keys))
+
+    def test_removed_cache_directory_is_recreated_on_next_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_dir = root / "db_storage"
+            rel = Path("contact") / "contact.db"
+            source_db = db_dir / rel
+            source_db.parent.mkdir(parents=True)
+            self._write_sqlite_db(source_db)
+            cache = self._cache(root, db_dir, rel)
+
+            def decrypt(_db, output, _key):
+                shutil.copyfile(source_db, output)
+
+            with patch("wechat_bridge_collector.wechat_source.full_decrypt", decrypt):
+                first = cache.get(rel.as_posix())
+                shutil.rmtree(cache.cache_dir)
+                second = cache.get(rel.as_posix())
+            self.assertEqual(first, second)
+            self.assertTrue(Path(second).is_file())
+            with sqlite3.connect(second) as connection:
+                self.assertEqual(connection.execute("PRAGMA quick_check").fetchone()[0], "ok")
+
+    def test_tempfile_creation_failure_is_retryable_snapshot_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_dir = root / "db_storage"
+            rel = Path("contact") / "contact.db"
+            source_db = db_dir / rel
+            source_db.parent.mkdir(parents=True)
+            self._write_sqlite_db(source_db)
+            cache = self._cache(root, db_dir, rel)
+            with patch("wechat_bridge_collector.wechat_source.tempfile.mkstemp",
+                       side_effect=FileNotFoundError("cache removed")) as create:
+                with self.assertRaisesRegex(DatabaseSnapshotError, "cache removed"):
+                    cache.get(rel.as_posix())
+            self.assertEqual(create.call_count, 3)
+
     def test_committed_wal_growth_is_applied_without_full_database_decrypt(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -170,7 +170,7 @@ class DBCache:
                     try:
                         self._apply_incremental(rel_key, cached, wal_snapshot, enc_key)
                         return cached.path
-                    except DatabaseSnapshotError:
+                    except (DatabaseSnapshotError, OSError):
                         pass
 
         out_path = str(
@@ -188,13 +188,18 @@ class DBCache:
             wal_snapshot = read_wal_snapshot(wal_path)
             if wal_snapshot.pending:
                 raise DatabaseSnapshotError(f"WAL transaction has not reached a commit boundary for {rel_key}")
-            descriptor, tmp_path = tempfile.mkstemp(
-                prefix=f".{hashlib.md5(rel_key.encode()).hexdigest()[:16]}.{os.getpid()}.{attempt}.",
-                suffix=".tmp",
-                dir=self.cache_dir,
-            )
-            os.close(descriptor)
+            tmp_path: str | None = None
             try:
+                # The OS may remove its temporary directory while we run.
+                # Recreate it for each attempt and classify creation failures
+                # with the other snapshot I/O errors so the owner can retry.
+                self.cache_dir.mkdir(parents=True, exist_ok=True)
+                descriptor, tmp_path = tempfile.mkstemp(
+                    prefix=f".{hashlib.md5(rel_key.encode()).hexdigest()[:16]}.{os.getpid()}.{attempt}.",
+                    suffix=".tmp",
+                    dir=self.cache_dir,
+                )
+                os.close(descriptor)
                 full_decrypt(str(db_path), tmp_path, enc_key)
                 apply_wal_snapshot(tmp_path, wal_snapshot, enc_key)
                 after_db_signature = self._db_signature(db_path)
@@ -202,20 +207,22 @@ class DBCache:
                     raise DatabaseSnapshotError("source main database changed while building decrypted snapshot")
                 self._assert_sqlite_healthy(tmp_path)
                 os.replace(tmp_path, out_path)
-                self._cache[rel_key] = CacheEntry(
-                    db_signature=after_db_signature,
-                    key_hash=key_hash,
-                    path=out_path,
-                    wal_generation=wal_snapshot.generation,
-                    wal_frame_count=len(wal_snapshot.frames),
-                    wal_checksum=wal_snapshot.checksum,
-                )
+                with self._metadata_lock:
+                    self._cache[rel_key] = CacheEntry(
+                        db_signature=after_db_signature,
+                        key_hash=key_hash,
+                        path=out_path,
+                        wal_generation=wal_snapshot.generation,
+                        wal_frame_count=len(wal_snapshot.frames),
+                        wal_checksum=wal_snapshot.checksum,
+                    )
                 self._save_persistent_cache()
                 return out_path
             except (OSError, sqlite3.Error, DatabaseSnapshotError) as exc:
                 last_error = exc
                 try:
-                    os.unlink(tmp_path)
+                    if tmp_path is not None:
+                        os.unlink(tmp_path)
                 except OSError:
                     pass
                 time.sleep(0.05)
@@ -294,8 +301,9 @@ class DBCache:
                     target.truncate(current.database_pages * PAGE_SZ)
                 target.flush()
                 os.fsync(target.fileno())
-            cached.wal_frame_count = len(current.frames)
-            cached.wal_checksum = current.checksum
+            with self._metadata_lock:
+                cached.wal_frame_count = len(current.frames)
+                cached.wal_checksum = current.checksum
             self._save_persistent_cache()
             remove_marker = True
         except Exception as exc:

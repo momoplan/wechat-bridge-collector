@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
+import threading
 
 from .autostart import install_autostart, result_json, start_collector, status, stop_collector
 from .bridge import BridgeClient
+from .collection import IndependentLoops
 from .config import CollectorConfig
 from .query_server import QueryMethodServer
 from .setup_keys import setup_collector
@@ -102,112 +103,148 @@ def cmd_run(args: argparse.Namespace) -> int:
     method_server = QueryMethodServer(cfg, source_runtime=source_runtime)
     method_server.start()
     source_runtime.initialize_async()
-    bridge = BridgeClient(cfg)
     state = CollectorState.load(cfg.state_path)
-    first_start = not cfg.state_path.exists()
-    delivery_failure_count = 0
-    snapshot_failure_count = 0
+    loops = IndependentLoops()
+    state_lock = threading.RLock()
+    initialized = threading.Event()
+    initialize_state = not cfg.state_path.exists() or args.reset_state
+
+    def save_state() -> None:
+        with state_lock:
+            state.save(cfg.state_path)
+
+    def messages() -> int:
+        nonlocal initialize_state
+        bridge = BridgeClient(cfg)
+        failure_count = 0
+        while not loops.stop.is_set():
+            try:
+                source = source_runtime.source_or_none()
+                if source is None:
+                    if args.once:
+                        print("source is not ready", file=sys.stderr)
+                        initialized.set()
+                        return 1
+                    loops.stop.wait(max(1.0, cfg.poll_interval_secs))
+                    continue
+                if initialize_state:
+                    # The contacts loop waits for bootstrap, so it cannot save
+                    # a contact checkpoint over a fresh/reset message cursor.
+                    fresh = CollectorState()
+                    source.bootstrap_state(fresh, backfill_seconds=args.backfill_seconds)
+                    with state_lock:
+                        state.sessions = fresh.sessions
+                        state.cursors = fresh.cursors
+                        state.contact_snapshot_token = ""
+                        state.save(cfg.state_path)
+                    initialize_state = False
+                    if args.backfill_seconds <= 0:
+                        print(f"initialized state without historical broadcast: {cfg.state_path}")
+                initialized.set()
+                current_sessions, changed = source.changed_usernames(state)
+                emitted = 0
+                failed = False
+                for candidate in source.iter_new_messages(state, changed, cfg.batch_size):
+                    if loops.stop.is_set():
+                        failed = True
+                        break
+                    if args.dry_run:
+                        print(json.dumps(candidate.payload, ensure_ascii=False))
+                    else:
+                        response = bridge.emit_message(
+                            candidate.payload, candidate.event_id, candidate.occurred_at,
+                        )
+                        if not response.ok:
+                            print(
+                                f"emit failed: HTTP {response.status} {response.body}; "
+                                "state cursor was not advanced",
+                                file=sys.stderr,
+                            )
+                            failed = True
+                            break
+                    with state_lock:
+                        state.set_cursor(
+                            candidate.cursor_key, candidate.cursor.create_time,
+                            candidate.cursor.local_id,
+                        )
+                    emitted += 1
+                with state_lock:
+                    if not failed:
+                        state.sessions = current_sessions
+                    state.save(cfg.state_path)
+                failure_count = failure_count + 1 if failed else 0
+                if args.once:
+                    print(f"emitted={emitted} changed_sessions={len(changed)}")
+                    return int(failed)
+            except DatabaseSnapshotError as exc:
+                failure_count += 1
+                print(
+                    f"message snapshot failed: {exc}; state session markers were not advanced; "
+                    f"retrying in {retry_delay(cfg.poll_interval_secs, failure_count):.1f}s",
+                    file=sys.stderr,
+                )
+                if not initialize_state:
+                    save_state()
+                if args.once:
+                    initialized.set()
+                    return 1
+            delay = retry_delay(cfg.poll_interval_secs, failure_count) if failure_count else cfg.poll_interval_secs
+            loops.stop.wait(delay)
+        return 0
+
+    def contacts() -> int:
+        bridge = BridgeClient(cfg)
+        failure_count = 0
+        while not initialized.wait(timeout=0.1):
+            if loops.stop.is_set():
+                return 0
+        while not loops.stop.is_set():
+            try:
+                source = source_runtime.source_or_none()
+                if source is None or initialize_state:
+                    if args.once:
+                        return 1
+                    loops.stop.wait(max(1.0, cfg.poll_interval_secs))
+                    continue
+                snapshot = load_complete_contact_snapshot(source)
+                snapshot_token = snapshot["snapshotToken"]
+                with state_lock:
+                    previous_token = state.contact_snapshot_token
+                if snapshot_token != previous_token:
+                    if not emit_contact_snapshot(bridge, snapshot, args.dry_run, loops.stop):
+                        failure_count += 1
+                        if args.once:
+                            return 1
+                        loops.stop.wait(retry_delay(cfg.poll_interval_secs, failure_count))
+                        continue
+                    with state_lock:
+                        state.contact_snapshot_token = snapshot_token
+                        state.save(cfg.state_path)
+                failure_count = 0
+                if args.once:
+                    return 0
+            except DatabaseSnapshotError as exc:
+                failure_count += 1
+                print(
+                    f"contact snapshot failed: {exc}; checkpoint was not advanced; "
+                    f"retrying in {retry_delay(cfg.poll_interval_secs, failure_count):.1f}s",
+                    file=sys.stderr,
+                )
+                if args.once:
+                    return 1
+            delay = retry_delay(cfg.poll_interval_secs, failure_count) if failure_count else cfg.poll_interval_secs
+            loops.stop.wait(delay)
+        return 0
 
     try:
         print(
             f"collector running localApp={cfg.app_id}.{cfg.event_name} "
             f"bridge={cfg.bridge_events_url} methods={method_server.base_url} state={cfg.state_path}"
         )
-
-        while True:
-            try:
-                source = source_runtime.source_or_none()
-                if source is None:
-                    if args.once:
-                        print("source is not ready", file=sys.stderr)
-                        return 1
-                    time.sleep(max(1.0, cfg.poll_interval_secs))
-                    continue
-                if first_start or args.reset_state:
-                    state = CollectorState()
-                    source.bootstrap_state(state, backfill_seconds=args.backfill_seconds)
-                    state.save(cfg.state_path)
-                    first_start = False
-                    args.reset_state = False
-                    if args.backfill_seconds <= 0:
-                        print(f"initialized state without historical broadcast: {cfg.state_path}")
-                snapshot = load_complete_contact_snapshot(source)
-                snapshot_token = snapshot["snapshotToken"]
-                if snapshot_token != state.contact_snapshot_token:
-                    if not emit_contact_snapshot(bridge, snapshot, args.dry_run):
-                        delivery_failure_count += 1
-                        if args.once:
-                            return 1
-                        time.sleep(retry_delay(cfg.poll_interval_secs, delivery_failure_count))
-                        continue
-                    state.contact_snapshot_token = snapshot_token
-                    state.save(cfg.state_path)
-                current_sessions, changed = source.changed_usernames(state)
-                emitted = 0
-                failed = False
-                for candidate in source.iter_new_messages(state, changed, cfg.batch_size):
-                    if args.dry_run:
-                        print(json.dumps(candidate.payload, ensure_ascii=False))
-                        ok = True
-                        status = 202
-                        body = ""
-                    else:
-                        response = bridge.emit_message(
-                            candidate.payload,
-                            candidate.event_id,
-                            candidate.occurred_at,
-                        )
-                        ok = response.ok
-                        status = response.status
-                        body = response.body
-                    if not ok:
-                        print(
-                            f"emit failed: HTTP {status} {body}; "
-                            "state cursor was not advanced",
-                            file=sys.stderr,
-                        )
-                        failed = True
-                        delivery_failure_count += 1
-                        break
-                    state.set_cursor(
-                        candidate.cursor_key,
-                        candidate.cursor.create_time,
-                        candidate.cursor.local_id,
-                    )
-                    emitted += 1
-
-                if not failed:
-                    state.sessions = current_sessions
-                    delivery_failure_count = 0
-                    snapshot_failure_count = 0
-                state.save(cfg.state_path)
-
-                if args.once:
-                    print(f"emitted={emitted} changed_sessions={len(changed)}")
-                    return 0
-
-                delay = cfg.poll_interval_secs
-                if delivery_failure_count:
-                    delay = max(
-                        delay,
-                        min(60.0, max(2.0, cfg.poll_interval_secs) * (2 ** min(delivery_failure_count - 1, 5))),
-                    )
-                time.sleep(delay)
-            except DatabaseSnapshotError as exc:
-                snapshot_failure_count += 1
-                delay = retry_delay(cfg.poll_interval_secs, snapshot_failure_count)
-                print(
-                    f"snapshot failed: {exc}; state session markers were not advanced; "
-                    f"retrying in {delay:.1f}s",
-                    file=sys.stderr,
-                )
-                state.save(cfg.state_path)
-                if args.once:
-                    return 1
-                time.sleep(delay)
-            except KeyboardInterrupt:
-                print("collector stopped")
-                return 0
+        return loops.run(messages, contacts)
+    except KeyboardInterrupt:
+        print("collector stopped")
+        return 0
     finally:
         method_server.stop()
 
@@ -250,7 +287,10 @@ def load_complete_contact_snapshot(source: WeChatSource, page_size: int = 500) -
     }
 
 
-def emit_contact_snapshot(bridge: BridgeClient, snapshot: dict, dry_run: bool) -> bool:
+def emit_contact_snapshot(
+    bridge: BridgeClient, snapshot: dict, dry_run: bool,
+    stop: threading.Event | None = None,
+) -> bool:
     account = snapshot["account"]
     account_id = account["accountId"]
     snapshot_token = snapshot["snapshotToken"]
@@ -272,6 +312,8 @@ def emit_contact_snapshot(bridge: BridgeClient, snapshot: dict, dry_run: bool) -
         }))
     events.append(("completed", {**base, "phase": "completed", "contactCount": snapshot["total"]}))
     for suffix, payload in events:
+        if stop is not None and stop.is_set():
+            return False
         event_id = f"contact-snapshot:{account_id}:{snapshot_token}:{suffix}"
         if dry_run:
             print(json.dumps(payload, ensure_ascii=False))
