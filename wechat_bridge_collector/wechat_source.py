@@ -23,6 +23,7 @@ import zstandard as zstd
 from Crypto.Cipher import AES
 
 from .config import CollectorConfig
+from .self_identity import resolve_self_sender
 from .state import CollectorState, Cursor
 
 
@@ -555,6 +556,12 @@ class WeChatSource:
         self._contact_names_cache = (signature, names)
         return names
 
+    def self_sender(self) -> str | None:
+        # Fresh operation-scoped metadata; never infer identity from accountId.
+        return resolve_self_sender(
+            lambda key: cached_snapshot(self.cache, key), self.msg_db_keys
+        )
+
     def account_profile(self) -> dict[str, Any]:
         account_id = Path(self.db_dir).parent.name.strip()
         if not account_id:
@@ -986,7 +993,7 @@ class WeChatSource:
             return None
         if not username:
             username = self.username_for_message_row(row, names) or ""
-        candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username)
+        candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username, self.self_sender() if "@chatroom" in username else None)
         return candidate.payload if candidate else None
 
     def get_chat_images(self, conversation_id: str, limit: int = 20, offset: int = 0, start_time: Any = "", end_time: Any = "") -> dict[str, Any]:
@@ -1123,6 +1130,7 @@ class WeChatSource:
         type_filter: set[int] | None = None,
     ) -> list[dict[str, Any]]:
         names = self.contact_names()
+        self_sender = self.self_sender() if "@chatroom" in username else None
         candidate_limit = normalize_limit(limit, 500) + normalize_offset(offset)
         collected: list[dict[str, Any]] = []
         for rel_key, table_name in self._message_tables_for_username(username):
@@ -1141,7 +1149,7 @@ class WeChatSource:
                         oldest_first=oldest_first,
                     )
             for row in rows:
-                candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username)
+                candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username, self_sender)
                 if not candidate:
                     continue
                 text = str(candidate.payload.get("text") or "")
@@ -1224,6 +1232,7 @@ class WeChatSource:
 
     def _query_table(self, rel_key: str, table_name: str, username: str, names: dict[str, str], cursor: Cursor, batch_size: int) -> list[MessageCandidate]:
         candidates: list[MessageCandidate] = []
+        self_sender = self.self_sender() if "@chatroom" in username else None
         with cached_snapshot(self.cache, rel_key) as db_path:
             if not db_path:
                 return candidates
@@ -1244,12 +1253,12 @@ class WeChatSource:
                     (cursor.create_time, cursor.create_time, cursor.local_id, batch_size),
                 ).fetchall()
                 for row in rows:
-                    candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username)
+                    candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username, self_sender)
                     if candidate:
                         candidates.append(candidate)
         return candidates
 
-    def _build_candidate(self, row: tuple[Any, ...], rel_key: str, table_name: str, username: str, names: dict[str, str], id_to_username: dict[int, str]) -> MessageCandidate | None:
+    def _build_candidate(self, row: tuple[Any, ...], rel_key: str, table_name: str, username: str, names: dict[str, str], id_to_username: dict[int, str], self_sender: str | None = None) -> MessageCandidate | None:
         local_id, local_type, create_time, real_sender_id, raw_content, ct = row
         local_id = int(local_id or 0)
         local_type = int(local_type or 0)
@@ -1266,7 +1275,11 @@ class WeChatSource:
         message_id = f"{rel_key}:{table_name}:{local_id}"
         event_id = hashlib.sha256(message_id.encode("utf-8")).hexdigest()
         occurred_at = datetime.fromtimestamp(create_time, tz=timezone.utc).isoformat()
-        direction = direction_for(is_group, username, sender_username)
+        # A body prefix is display data, not evidence of a group sender identity.
+        direction_sender = id_to_username.get(int(real_sender_id or 0), "") if is_group else sender_username
+        direction = direction_for(is_group, username, direction_sender, self_sender)
+        if is_group and base_type in {10000, 10002}:
+            direction = "unknown"
         if direction == "outgoing" and not self.config.include_outgoing:
             return None
 
@@ -1708,9 +1721,11 @@ def first_text(root: ET.Element, paths: list[str]) -> str:
     return ""
 
 
-def direction_for(is_group: bool, conversation_username: str, sender_username: str) -> str:
+def direction_for(is_group: bool, conversation_username: str, sender_username: str, self_sender: str | None = None) -> str:
     if is_group:
-        return "unknown"
+        if not self_sender or not sender_username:
+            return "unknown"
+        return "outgoing" if sender_username == self_sender else "incoming"
     if not sender_username:
         return "unknown"
     if sender_username == conversation_username:
