@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import plistlib
 import re
 import subprocess
 import sys
@@ -10,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from .config import CollectorConfig
+from .key_coverage import check_key_coverage
 
 
 def setup_collector(cfg: CollectorConfig, *, force: bool = False, extract_keys: bool = True) -> dict[str, str]:
@@ -27,7 +27,9 @@ def setup_collector(cfg: CollectorConfig, *, force: bool = False, extract_keys: 
     cfg.save()
 
     keys_path = Path(cfg.keys_file).expanduser()
+    keys_path.parent.mkdir(parents=True, exist_ok=True)
     if keys_path.exists() and not force:
+        check_key_coverage(cfg.db_dir, json.loads(keys_path.read_text(encoding="utf-8")))
         return {
             "status": "ready",
             "config_path": str(cfg.config_path),
@@ -43,7 +45,21 @@ def setup_collector(cfg: CollectorConfig, *, force: bool = False, extract_keys: 
             "db_dir": cfg.db_dir,
         }
 
-    extract_wechat_keys(cfg, keys_path)
+    # The scanner may fail or produce a partial key ring. Never write over the
+    # installed ring before verifying the complete configured account.
+    with tempfile.TemporaryDirectory(prefix=".key-refresh-", dir=keys_path.parent) as staging:
+        candidate_path = Path(staging) / "all_keys.json"
+        extract_wechat_keys(cfg, candidate_path)
+        candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+        if not isinstance(candidate, dict):
+            raise ValueError("密钥扫描结果必须是 JSON object")
+        previous = json.loads(keys_path.read_text(encoding="utf-8")) if keys_path.exists() else {}
+        merged = {**previous, **candidate}
+        check_key_coverage(cfg.db_dir, merged)
+        candidate_path.write_text(json.dumps(merged, ensure_ascii=False) + "\n", encoding="utf-8")
+        if os.name != "nt":
+            candidate_path.chmod(0o600)
+        os.replace(candidate_path, keys_path)
     return {
         "status": "keys_extracted",
         "config_path": str(cfg.config_path),
@@ -109,7 +125,7 @@ def _extract_macos_keys(cfg: CollectorConfig, output_path: Path) -> None:
     _compile_macos_scanner(source, binary)
 
     result = subprocess.run(
-        [str(binary)],
+        [str(binary), "0", str(Path(cfg.db_dir).expanduser())],
         cwd=str(output_path.parent),
         text=True,
         capture_output=True,
@@ -117,7 +133,11 @@ def _extract_macos_keys(cfg: CollectorConfig, output_path: Path) -> None:
     )
     combined = f"{result.stdout}\n{result.stderr}"
     if "task_for_pid" in combined:
-        _resign_wechat_or_raise(combined)
+        raise RuntimeError(
+            "macOS 不允许读取微信进程（task_for_pid）。未修改签名、未重启微信、未替换已有密钥。"
+            "请先由用户处理进程读取权限，或导入覆盖当前数据库的密钥文件；"
+            "重新检测不会增加系统权限。"
+        )
     if result.returncode != 0:
         raise RuntimeError(_format_extract_error(result.stdout, result.stderr))
 
@@ -141,68 +161,6 @@ def _compile_macos_scanner(source: Path, binary: Path) -> None:
     if result.returncode != 0:
         raise RuntimeError(_format_extract_error(result.stdout, result.stderr))
     subprocess.run(["codesign", "-s", "-", str(binary)], text=True, capture_output=True, timeout=30)
-
-
-def _resign_wechat_or_raise(previous_output: str) -> None:
-    app_path = _find_wechat_app()
-    if not app_path:
-        raise RuntimeError(
-            "macOS blocked task_for_pid and WeChat.app was not found.\n"
-            "Install WeChat, then run: sudo wechat-bridge-collector setup --force"
-        )
-    if hasattr(os, "geteuid") and os.geteuid() != 0:
-        raise RuntimeError(
-            "macOS blocked task_for_pid. Run setup with administrator privileges:\n"
-            "  sudo wechat-bridge-collector setup --force\n\n"
-            + previous_output
-        )
-
-    entitlements = _read_entitlements(app_path)
-    entitlements["com.apple.security.get-task-allow"] = True
-    fd, ent_path = tempfile.mkstemp(suffix=".plist")
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(plistlib.dumps(entitlements, fmt=plistlib.FMT_XML))
-        result = subprocess.run(
-            ["codesign", "--force", "--sign", "-", "--entitlements", ent_path, str(app_path)],
-            text=True,
-            capture_output=True,
-            timeout=90,
-        )
-    finally:
-        Path(ent_path).unlink(missing_ok=True)
-
-    if result.returncode != 0:
-        raise RuntimeError(
-            "Failed to re-sign WeChat while preserving entitlements.\n"
-            + _format_extract_error(result.stdout, result.stderr)
-        )
-    raise RuntimeError(
-        "WeChat was re-signed with get-task-allow. Fully quit and reopen WeChat, "
-        "then run: sudo wechat-bridge-collector setup --force"
-    )
-
-
-def _find_wechat_app() -> Path | None:
-    for candidate in (Path.home() / "Applications/WeChat.app", Path("/Applications/WeChat.app")):
-        if candidate.is_dir():
-            return candidate
-    return None
-
-
-def _read_entitlements(app_path: Path) -> dict:
-    result = subprocess.run(
-        ["codesign", "-d", "--entitlements", ":-", str(app_path)],
-        text=False,
-        capture_output=True,
-        timeout=30,
-    )
-    if result.returncode == 0 and result.stdout:
-        try:
-            return plistlib.loads(result.stdout)
-        except Exception:
-            return {}
-    return {}
 
 
 def _format_extract_error(stdout: str, stderr: str) -> str:

@@ -169,6 +169,7 @@ class QueryMethodServer:
                         payload = self._read_json()
                         current_source = require_source(source, source_runtime, access_state)
                         result = dispatch_method(current_source, method, payload)
+                        require_source(source, source_runtime, access_state)
                         self._write_json(200, {"ok": True, "data": result})
                     except SourceAccessUnavailable as exc:
                         self._write_json(
@@ -188,6 +189,7 @@ class QueryMethodServer:
                     payload = self._read_json()
                     current_source = require_source(source, source_runtime, access_state)
                     result = dispatch_method(current_source, method, payload)
+                    require_source(source, source_runtime, access_state)
                     self._write_json(200, success_response(result))
                 except SourceAccessUnavailable as exc:
                     self._write_json(

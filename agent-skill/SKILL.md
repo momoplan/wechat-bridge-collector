@@ -73,18 +73,8 @@ bash {baseDir}/scripts/setup_macos.sh
 - 打开 macOS 完全磁盘访问设置。
 - 提示用户把“百积木”加入并开启，重启百积木后从应用详情页启动。
 
-如果 setup 因 macOS `task_for_pid` 被拦截失败，按错误提示处理：
+如果 setup 因 macOS `task_for_pid` 被拦截失败，Connector 不会自动重签或重启微信，也不会覆盖已有密钥。先说明当前权限限制，由用户选择导入覆盖当前数据库的密钥，或单独确认需要的微信签名/重启操作。不能把普通“自动获取”授权解释为允许修改微信安装。权限处理后再通过应用“自动获取”及“重新检测”完成覆盖验证。
 
-```bash
-cd ~/baijimu-wechat-bridge/wechat-bridge-collector
-sudo .venv/bin/wechat-bridge-collector setup --force
-```
-
-如果命令提示已重签 WeChat，需要让用户完全退出并重新打开微信，再重跑：
-
-```bash
-bash {baseDir}/scripts/setup_macos.sh
-```
 
 ### 3. 手动配置流程
 当脚本不可用或用户不想使用脚本时，按下面步骤执行：

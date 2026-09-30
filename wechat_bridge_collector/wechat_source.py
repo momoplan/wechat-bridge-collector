@@ -22,6 +22,7 @@ from typing import Any, Iterable
 import zstandard as zstd
 from Crypto.Cipher import AES
 
+from .key_coverage import check_key_coverage
 from .config import CollectorConfig
 from .self_identity import resolve_self_sender
 from .state import CollectorState, Cursor
@@ -518,6 +519,12 @@ class WeChatSource:
             "session_count": len(session_state),
             "contact_name_count": len(names),
         }
+
+    def assert_complete_coverage(self) -> None:
+        try:
+            check_key_coverage(self.db_dir, self.all_keys)
+        except (OSError, ValueError) as exc:
+            raise DatabaseSnapshotError(str(exc)) from exc
 
     def assert_source_access(self) -> None:
         db_dir = Path(self.db_dir)

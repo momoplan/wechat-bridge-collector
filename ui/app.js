@@ -188,9 +188,9 @@ async function loadSessions(preserveSelection = true) {
     const waitingForSource = message.includes("SOURCE_NOT_READY")
       || message.includes("数据库访问权限")
       || message.includes("数据库访问");
-    setRuntimeBadge(waitingForSource ? "等待数据库权限" : "连接失败", waitingForSource ? "warning" : "danger");
+    setRuntimeBadge(waitingForSource ? "数据源未就绪" : "连接失败", waitingForSource ? "warning" : "danger");
     setNotice(message, true);
-    elements["session-list"].replaceChildren(empty("无法读取会话，请确认应用已启动且数据库访问权限正常。"));
+    elements["session-list"].replaceChildren(empty("无法读取会话，请查看数据源状态中的具体原因。"));
   } finally {
     setBusy("sessions", false);
   }
@@ -449,7 +449,7 @@ async function loadStatus(clearNotice = true) {
       ["版本", text(state?.version, "未知")],
       ["服务名", text(state?.serviceName, "未知")],
       ["数据库状态", sourceStatus],
-      ["状态说明", text(sourceAccess.detail, sourceReady ? "本地数据库可读取" : "请在系统设置中授予百积木完全磁盘访问权限")],
+      ["状态说明", text(sourceAccess.detail, sourceReady ? "本地数据库可读取" : "请查看上方具体原因并处理后重新检测")],
       ["数据库", text(probe.db_dir, "未配置")],
       ["密钥文件", text(probe.keys_file, "未配置")],
       ["密钥数量", String(probe.key_count ?? 0)],
@@ -462,7 +462,7 @@ async function loadStatus(clearNotice = true) {
     ];
     elements["status-grid"].replaceChildren(...values.map(([label, value]) => statusItem(label, value)));
     elements["status-grid"].dataset.loaded = "true";
-    setRuntimeBadge(sourceReady ? "运行中" : sourceAccess.status === "keys_missing" ? "需要密钥" : "等待本机授权", sourceReady ? "success" : "warning");
+    setRuntimeBadge(sourceReady ? "运行中" : sourceAccess.status === "keys_missing" ? "需要密钥" : "数据源未就绪", sourceReady ? "success" : "warning");
     return state;
   } catch (error) {
     setRuntimeBadge("检测失败", "danger");

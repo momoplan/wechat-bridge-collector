@@ -21,6 +21,9 @@ class FakeSource:
         self.all_keys = {"message/message_0.db": {"enc_key": "a" * 64}}
         self.msg_db_keys = ["message/message_0.db"]
 
+    def assert_complete_coverage(self):
+        return None
+
     def assert_source_access(self):
         return None
 

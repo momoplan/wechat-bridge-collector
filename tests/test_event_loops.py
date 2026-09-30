@@ -18,6 +18,9 @@ class Source:
     def __init__(self):
         self.bootstraps = 0
 
+    def assert_complete_coverage(self):
+        return None
+
     def bootstrap_state(self, state, backfill_seconds):
         self.bootstraps += 1
         state.set_cursor('db#table', 10, 1)
@@ -256,3 +259,24 @@ def test_incomplete_initialization_exits_once_without_persisting_empty_state(tmp
         bridge.return_value.emit_event.assert_not_called()
         bridge.return_value.emit_message.assert_not_called()
     assert not cfg.state_path.exists()
+
+
+def test_missing_shard_stops_events_and_preserves_session_markers(tmp_path):
+    class MissingShard(Source):
+        def assert_complete_coverage(self):
+            raise DatabaseSnapshotError('missing message/message_6.db')
+
+    class NoRequests(BaseHTTPRequestHandler):
+        def do_POST(self):
+            raise AssertionError('incomplete data must not be broadcast')
+        def log_message(self, *_args):
+            pass
+
+    state = CollectorState(sessions={'chat': 10}, contact_snapshot_token='snapshot-1')
+    state.set_cursor('db#table', 10, 1)
+    state.save(tmp_path / 'state.json')
+    result, _state = run_once(tmp_path, MissingShard(), NoRequests)
+    assert result == 1
+    saved = CollectorState.load(tmp_path / 'state.json')
+    assert saved.sessions == {'chat': 10}
+    assert saved.cursor_for('db#table') == Cursor(10, 1)

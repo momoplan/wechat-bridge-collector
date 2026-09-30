@@ -127,11 +127,13 @@ def cmd_run(args: argparse.Namespace) -> int:
                         return 1
                     loops.stop.wait(max(1.0, cfg.poll_interval_secs))
                     continue
+                source.assert_complete_coverage()
                 if initialize_state:
                     # The contacts loop waits for bootstrap, so it cannot save
                     # a contact checkpoint over a fresh/reset message cursor.
                     fresh = CollectorState()
                     source.bootstrap_state(fresh, backfill_seconds=args.backfill_seconds)
+                    source.assert_complete_coverage()
                     with state_lock:
                         state.sessions = fresh.sessions
                         state.cursors = fresh.cursors
@@ -168,6 +170,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                             candidate.cursor.local_id,
                         )
                     emitted += 1
+                source.assert_complete_coverage()
                 with state_lock:
                     if not failed:
                         state.sessions = current_sessions

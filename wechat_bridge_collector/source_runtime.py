@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from .config import LEGACY_STATE_DIR, CollectorConfig
 from .setup_keys import setup_collector
-from .wechat_source import WeChatSource
+from .wechat_source import DatabaseSnapshotError, WeChatSource
 
 
 class SourceNotReady(RuntimeError):
@@ -82,7 +82,12 @@ class SourceRuntime:
 
         with self._lock:
             self._source = source
-            self._update_locked("ready", "")
+            try:
+                source.assert_complete_coverage()
+            except DatabaseSnapshotError as exc:
+                self._update_locked("failed", _safe_error(exc))
+            else:
+                self._update_locked("ready", "")
         return self.snapshot()
 
     def initialize_async(self) -> dict[str, Any]:
@@ -132,6 +137,7 @@ class SourceRuntime:
         return Path(self.config.keys_file).expanduser() if self.config.keys_file else self.config.default_keys_path
 
     def require_source(self) -> WeChatSource:
+        self.snapshot()
         with self._lock:
             if self._source is not None and self._status == "ready":
                 return self._source
@@ -144,6 +150,13 @@ class SourceRuntime:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
+            if self._source is not None and not self._job_running:
+                try:
+                    self._source.assert_complete_coverage()
+                except DatabaseSnapshotError as exc:
+                    self._update_locked("failed", _safe_error(exc))
+                else:
+                    self._update_locked("ready", "")
             return {
                 "status": self._status,
                 "detail": self._detail,

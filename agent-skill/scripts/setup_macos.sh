@@ -52,10 +52,7 @@ COLLECTOR="$PROJECT_DIR/.venv/bin/wechat-bridge-collector-python"
 
 log "Running collector setup"
 if ! "$COLLECTOR" setup; then
-  log "Setup failed. If macOS blocked task_for_pid, run:"
-  log "  cd \"$PROJECT_DIR\""
-  log "  sudo \"$COLLECTOR\" setup --force"
-  log "Then fully quit and reopen WeChat if prompted, and rerun this script."
+  log "Setup will not re-sign or restart WeChat. Resolve the reported permission issue or import a complete key file, then retry."
   exit 3
 fi
 

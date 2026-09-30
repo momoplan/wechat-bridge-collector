@@ -107,7 +107,7 @@ static int read_db_salt(const char *path, char *salt_hex_out) {
 
 int main(int argc, char *argv[]) {
     pid_t pid;
-    if (argc >= 2)
+    if (argc >= 2 && atoi(argv[1]) > 0)
         pid = atoi(argv[1]);
     else
         pid = find_wechat_pid();
@@ -153,7 +153,10 @@ int main(int argc, char *argv[]) {
         home);
 
     /* Walk each account's db_storage directory */
-    DIR *xdir = opendir(db_base_dir);
+    if (argc >= 3) {
+        nftw(argv[2], nftw_collect_db, 16, FTW_PHYS);
+    }
+    DIR *xdir = argc >= 3 ? NULL : opendir(db_base_dir);
     if (xdir) {
         struct dirent *ent;
         while ((ent = readdir(xdir)) != NULL) {
