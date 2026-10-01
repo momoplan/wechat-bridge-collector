@@ -1,5 +1,8 @@
 # WeChat Bridge Collector
 
+从 `4.0.0` 起，联系人改用 `contactsChanged` 增量协议：首次按批次初始化，之后仅发送新增或实际变化的联系人，持久保存发送进度。旧 `contactSnapshotChanged` 订阅不再收到自动快照事件。必须先按 [联系人增量同步](docs/contact-sync.md) 适配消费者并隔离旧快照任务，再安装本版本；本版本不会清理平台历史积压。
+
+
 跨平台微信本地消息采集器和只读查询应用。它读取本机微信 4.x 本地数据库，依赖 `ylytdeng/wechat-decrypt` 的 key 提取能力，然后把新消息作为设备上的本地应用事件交给 Bridge Agent；查询方法由 `connector.json` 直接声明。
 
 从 `0.4.0` 起官方 Connector 固定使用 Python 入口 `wechat-bridge-collector-python`。仓库中保留的 Rust 实验代码不参与 Connector 启动解析；从 `2.0.4` 起，未签名且不参与运行的旧预编译二进制不再进入源码归档。
