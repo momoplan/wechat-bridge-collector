@@ -653,7 +653,7 @@ class WeChatSource:
         rel_key = os.path.join("contact", "contact.db")
         with cached_snapshot(self.cache, rel_key) as path:
             if not path:
-                return [], None
+                raise DatabaseSnapshotError("contact database is unavailable")
             signature = file_signature(path)
             cached = self._contacts_cache
             if cached and cached[0] == signature:
@@ -674,8 +674,8 @@ class WeChatSource:
                         FROM contact
                         """
                     ).fetchall()
-                except sqlite3.Error:
-                    return [], signature
+                except sqlite3.Error as exc:
+                    raise DatabaseSnapshotError("contact database cannot be read completely") from exc
                 group_members = self._group_members(conn)
         contacts = []
         for contact_id, username, nick, remark, delete_flag, is_in_chat_room in rows:

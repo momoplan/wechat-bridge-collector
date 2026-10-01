@@ -1,7 +1,9 @@
 import sqlite3
 from pathlib import Path
 
-from wechat_bridge_collector.wechat_source import WeChatSource
+import pytest
+
+from wechat_bridge_collector.wechat_source import DatabaseSnapshotError, WeChatSource
 
 
 class StaticCache:
@@ -117,3 +119,22 @@ def test_contact_schema_without_group_metadata_remains_readable(tmp_path: Path):
             "memberCount": 0,
         }
     ]
+
+
+def test_missing_contact_table_is_not_a_successful_empty_snapshot(tmp_path):
+    contact_db = tmp_path / 'contact.db'
+    with sqlite3.connect(contact_db) as conn:
+        conn.execute('CREATE TABLE unrelated(id INTEGER)')
+    source = create_source(contact_db)
+    with pytest.raises(DatabaseSnapshotError, match='cannot be read completely'):
+        source.contact_snapshot()
+
+
+def test_valid_empty_contact_table_is_a_complete_empty_snapshot(tmp_path):
+    contact_db = tmp_path / 'contact.db'
+    with sqlite3.connect(contact_db) as conn:
+        conn.execute('CREATE TABLE contact(username TEXT,nick_name TEXT,remark TEXT)')
+    result = create_source(contact_db).contact_snapshot()
+    assert result['contacts'] == []
+    assert result['total'] == 0
+    assert result['hasMore'] is False

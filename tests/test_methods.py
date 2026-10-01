@@ -35,6 +35,9 @@ class ConnectorLifecycleTest(unittest.TestCase):
 
     def test_complete_contact_snapshot_reads_every_page(self):
         class FakeSource:
+            def assert_complete_coverage(self):
+                pass
+
             def contact_snapshot(self, limit=500, offset=0, include_groups=False):
                 contacts = [{"username": f"user-{index}"} for index in range(7)]
                 page = contacts[offset : offset + limit]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 import threading
 
@@ -9,6 +10,7 @@ from .autostart import install_autostart, result_json, start_collector, status, 
 from .bridge import BridgeClient
 from .collection import IndependentLoops
 from .config import CollectorConfig
+from .contact_sync import ContactSync, EVENT_NAME
 from .query_server import QueryMethodServer
 from .setup_keys import setup_collector
 from .source_runtime import SourceRuntime
@@ -201,43 +203,43 @@ def cmd_run(args: argparse.Namespace) -> int:
         while not initialized.wait(timeout=0.1):
             if loops.stop.is_set():
                 return 0
-        while not loops.stop.is_set():
-            try:
-                source = source_runtime.source_or_none()
-                if source is None or initialize_state:
-                    if args.once:
-                        return 1
-                    loops.stop.wait(max(1.0, cfg.poll_interval_secs))
-                    continue
-                snapshot = load_complete_contact_snapshot(source)
-                snapshot_token = snapshot["snapshotToken"]
-                with state_lock:
-                    previous_token = state.contact_snapshot_token
-                if snapshot_token != previous_token:
-                    if not emit_contact_snapshot(bridge, snapshot, args.dry_run, loops.stop):
-                        failure_count += 1
+        # This state belongs to contacts alone; message resets never erase it.
+        sync = None
+        try:
+            while not loops.stop.is_set():
+                try:
+                    if sync is None:
+                        sync = ContactSync(":memory:" if args.dry_run else cfg.contact_sync_path)
+                    source = source_runtime.source_or_none()
+                    if source is None or initialize_state:
                         if args.once:
                             return 1
-                        loops.stop.wait(retry_delay(cfg.poll_interval_secs, failure_count))
+                        loops.stop.wait(max(1.0, cfg.poll_interval_secs))
                         continue
-                    with state_lock:
-                        state.contact_snapshot_token = snapshot_token
-                        state.save(cfg.state_path)
-                failure_count = 0
-                if args.once:
-                    return 0
-            except DatabaseSnapshotError as exc:
-                failure_count += 1
-                print(
-                    f"contact snapshot failed: {exc}; checkpoint was not advanced; "
-                    f"retrying in {retry_delay(cfg.poll_interval_secs, failure_count):.1f}s",
-                    file=sys.stderr,
-                )
-                if args.once:
-                    return 1
-            delay = retry_delay(cfg.poll_interval_secs, failure_count) if failure_count else cfg.poll_interval_secs
-            loops.stop.wait(delay)
-        return 0
+                    # Retry saved bytes first, even if the live contact DB changed.
+                    delivered = drain_contact_events(sync, bridge, args.dry_run, loops.stop)
+                    if delivered:
+                        snapshot = load_complete_contact_snapshot(source)
+                        sync.prepare(snapshot)
+                        delivered = drain_contact_events(sync, bridge, args.dry_run, loops.stop)
+                    failure_count = 0 if delivered else failure_count + 1
+                    if args.once:
+                        return int(not delivered)
+                except (DatabaseSnapshotError, sqlite3.Error, OSError, ValueError) as exc:
+                    failure_count += 1
+                    print(
+                        f"contact sync failed: {exc}; pending events retained; "
+                        f"retrying in {retry_delay(cfg.poll_interval_secs, failure_count):.1f}s",
+                        file=sys.stderr,
+                    )
+                    if args.once:
+                        return 1
+                delay = retry_delay(cfg.poll_interval_secs, failure_count) if failure_count else cfg.poll_interval_secs
+                loops.stop.wait(delay)
+            return 0
+        finally:
+            if sync is not None:
+                sync.close()
 
     try:
         print(
@@ -260,71 +262,54 @@ def retry_delay(poll_interval_secs: float, failure_count: int) -> float:
 
 
 def load_complete_contact_snapshot(source: WeChatSource, page_size: int = 500) -> dict:
+    source.assert_complete_coverage()
     offset = 0
     contacts: list[dict] = []
+    seen_ids: set[str] = set()
     first_page: dict | None = None
     while True:
-        page = source.contact_snapshot(
-            limit=page_size,
-            offset=offset,
-            include_groups=False,
-        )
+        page = source.contact_snapshot(limit=page_size, offset=offset, include_groups=False)
+        if page["snapshotToken"] == "missing":
+            raise DatabaseSnapshotError("contact database is missing")
         if first_page is None:
             first_page = page
-        elif page["snapshotToken"] != first_page["snapshotToken"]:
+        elif (page["snapshotToken"] != first_page["snapshotToken"]
+              or page["account"] != first_page["account"]
+              or page["total"] != first_page["total"]):
             raise DatabaseSnapshotError("contact database changed while reading snapshot pages")
-        contacts.extend(page["contacts"])
+        if page["offset"] != offset or (page["hasMore"] and not page["contacts"]):
+            raise DatabaseSnapshotError("contact snapshot pagination did not advance")
+        for contact in page["contacts"]:
+            if contact["username"] in seen_ids:
+                raise DatabaseSnapshotError("duplicate contact across snapshot pages")
+            seen_ids.add(contact["username"])
+            contacts.append(contact)
+        offset += len(page["contacts"])
+        if offset > page["total"]:
+            raise DatabaseSnapshotError("contact snapshot exceeds reported total")
         if not page["hasMore"]:
             break
-        offset += len(page["contacts"])
-        if offset <= 0:
-            raise DatabaseSnapshotError("contact snapshot pagination did not advance")
     assert first_page is not None
-    return {
-        **first_page,
-        "contacts": contacts,
-        "offset": 0,
-        "limit": len(contacts),
-        "total": len(contacts),
-        "hasMore": False,
-    }
+    if len(contacts) != first_page["total"]:
+        raise DatabaseSnapshotError("incomplete contact snapshot")
+    source.assert_complete_coverage()
+    return {**first_page, "contacts": contacts, "offset": 0,
+            "limit": len(contacts), "total": len(contacts), "hasMore": False}
 
 
-def emit_contact_snapshot(
-    bridge: BridgeClient, snapshot: dict, dry_run: bool,
-    stop: threading.Event | None = None,
-) -> bool:
-    account = snapshot["account"]
-    account_id = account["accountId"]
-    snapshot_token = snapshot["snapshotToken"]
-    base = {
-        "accountId": account_id,
-        "snapshotToken": snapshot_token,
-        "source": account["source"],
-        "platform": account["platform"],
-    }
-    events = [("started", {**base, "phase": "started"})]
-    for contact in snapshot["contacts"]:
-        events.append((contact["username"], {
-            **base,
-            "phase": "contact",
-            "contactId": contact["username"],
-            "displayName": contact["displayName"],
-            "nickName": contact["nickName"],
-            "remark": contact["remark"],
-        }))
-    events.append(("completed", {**base, "phase": "completed", "contactCount": snapshot["total"]}))
-    for suffix, payload in events:
-        if stop is not None and stop.is_set():
+def drain_contact_events(sync: ContactSync, bridge: BridgeClient, dry_run: bool,
+                         stop: threading.Event) -> bool:
+    while (event := sync.pending()) is not None:
+        if stop.is_set():
             return False
-        event_id = f"contact-snapshot:{account_id}:{snapshot_token}:{suffix}"
         if dry_run:
-            print(json.dumps(payload, ensure_ascii=False))
-            continue
-        response = bridge.emit_event("contactSnapshotChanged", payload, event_id)
-        if not response.ok:
-            print(f"contact snapshot emit failed: HTTP {response.status} {response.body}", file=sys.stderr)
-            return False
+            print(json.dumps(event, ensure_ascii=False))
+        else:
+            response = bridge.emit_event(EVENT_NAME, event["payload"], event["eventId"])
+            if not response.ok:
+                print(f"contact emit failed: HTTP {response.status}; event retained", file=sys.stderr)
+                return False
+        sync.acknowledge(event["eventId"])
     return True
 
 

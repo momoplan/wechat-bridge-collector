@@ -85,7 +85,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["runtime"]["stopArgs"] == ["stop"]
     assert manifest["events"][0]["name"] == "messageReceived"
     assert manifest["events"][0]["payload_schema"] == MESSAGE_EVENT_PAYLOAD_SCHEMA
-    assert manifest["events"][1]["name"] == "contactSnapshotChanged"
+    assert manifest["events"][1]["name"] == "contactsChanged"
     assert manifest["events"][1]["payload_schema"] == CONTACT_EVENT_PAYLOAD_SCHEMA
     assert "conversationId" in manifest["events"][0]["payload_schema"]["properties"]
     assert "accountId" in manifest["events"][0]["payload_schema"]["required"]

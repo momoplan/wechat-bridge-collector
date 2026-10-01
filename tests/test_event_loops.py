@@ -8,6 +8,7 @@ import pytest
 
 from wechat_bridge_collector.app import build_parser, cmd_run
 from wechat_bridge_collector.collection import IndependentLoops
+from wechat_bridge_collector.contact_sync import ContactSync
 from wechat_bridge_collector.config import CollectorConfig
 from wechat_bridge_collector.bridge import BridgeResponse
 from wechat_bridge_collector.state import CollectorState, Cursor
@@ -37,7 +38,7 @@ class Source:
     def contact_snapshot(self, **kwargs):
         return {
             'account': {'accountId': 'test', 'source': 'wechat-local-db', 'platform': 'windows'},
-            'snapshotToken': 'snapshot-1', 'hasMore': False,
+            'snapshotToken': 'snapshot-1', 'hasMore': False, 'offset': 0, 'total': 1,
             'contacts': [{'username': 'contact-1', 'displayName': 'Test', 'nickName': '', 'remark': ''}],
         }
 
@@ -71,7 +72,7 @@ def test_blocked_contact_http_does_not_block_message_and_does_not_advance_contac
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-            if body['event'] == 'contactSnapshotChanged':
+            if body['event'] == 'contactsChanged':
                 ordering.append('contact waiting')
                 contact_started.set()
                 delivered = message_delivered.wait(3)
@@ -112,8 +113,8 @@ def test_message_failure_does_not_block_contact_sequence_or_overwrite_its_checkp
                 self.send_response(503)
             else:
                 assert message_started.wait(3)
-                phases.append(body['payload']['phase'])
-                if phases[-1] == 'completed':
+                phases.append(body['payload']['mode'])
+                if body['payload']['batchIndex'] + 1 == body['payload']['batchCount']:
                     contacts_completed.set()
                 self.send_response(200)
             self.end_headers()
@@ -124,8 +125,13 @@ def test_message_failure_does_not_block_contact_sequence_or_overwrite_its_checkp
 
     result, state = run_once(tmp_path, Source(), Handler)
     assert result == 1
-    assert phases == ['started', 'contact', 'completed']
-    assert state.contact_snapshot_token == 'snapshot-1'
+    assert phases == ['initial']
+    saved_contacts = ContactSync(tmp_path / 'contact-sync.sqlite3')
+    try:
+        assert saved_contacts.pending() is None
+        assert saved_contacts.db.execute('SELECT COUNT(*) FROM contacts').fetchone()[0] == 1
+    finally:
+        saved_contacts.close()
     assert state.cursor_for('db#table') == Cursor(10, 1)
     assert state.sessions == {}
 
@@ -228,6 +234,10 @@ def test_restart_retries_unacknowledged_message_without_bootstrapping(tmp_path):
     saved.set_cursor('db#table', 10, 1)
     saved.save(cfg.state_path)
     source = Source()
+    contacts = ContactSync(cfg.contact_sync_path)
+    contacts.prepare(source.contact_snapshot())
+    contacts.acknowledge(contacts.pending()['eventId'])
+    contacts.close()
     with patch('wechat_bridge_collector.app._load_config', return_value=cfg), \
          patch('wechat_bridge_collector.app.SourceRuntime') as runtime, \
          patch('wechat_bridge_collector.app.QueryMethodServer'), \
@@ -280,3 +290,52 @@ def test_missing_shard_stops_events_and_preserves_session_markers(tmp_path):
     saved = CollectorState.load(tmp_path / 'state.json')
     assert saved.sessions == {'chat': 10}
     assert saved.cursor_for('db#table') == Cursor(10, 1)
+
+
+def test_contact_state_corruption_does_not_block_message_delivery(tmp_path):
+    corrupted = tmp_path / 'contact-sync.sqlite3'
+    corrupted.write_bytes(b'not a sqlite database')
+    delivered = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            delivered.append(body['event'])
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    result, state = run_once(tmp_path, Source(), Handler)
+    assert result == 1
+    assert delivered == ['messageReceived']
+    assert state.cursor_for('db#table') == Cursor(20, 2)
+    assert corrupted.read_bytes() == b'not a sqlite database'
+
+
+def test_real_loop_restart_uses_diff_and_reset_message_cursor_preserves_contacts(tmp_path):
+    cfg = CollectorConfig(state_dir=str(tmp_path))
+    source = Source()
+    snapshot = source.contact_snapshot()
+    source.contact_snapshot = lambda **kwargs: snapshot
+    with patch('wechat_bridge_collector.app._load_config', return_value=cfg), \
+         patch('wechat_bridge_collector.app.SourceRuntime') as runtime, \
+         patch('wechat_bridge_collector.app.QueryMethodServer'), \
+         patch('wechat_bridge_collector.app.BridgeClient') as bridge:
+        runtime.return_value.source_or_none.return_value = source
+        bridge.return_value.emit_message.return_value = BridgeResponse(True, 200, '{}')
+        bridge.return_value.emit_event.return_value = BridgeResponse(True, 200, '{}')
+        args = build_parser().parse_args(['run', '--once'])
+        assert cmd_run(args) == 0
+        assert bridge.return_value.emit_event.call_count == 1
+        assert bridge.return_value.emit_event.call_args.args[1]['mode'] == 'initial'
+        snapshot['snapshotToken'] = 'file-changed-but-contacts-unchanged'
+        assert cmd_run(args) == 0
+        assert bridge.return_value.emit_event.call_count == 1
+        snapshot['contacts'][0]['remark'] = 'changed'
+        assert cmd_run(args) == 0
+        assert bridge.return_value.emit_event.call_count == 2
+        assert bridge.return_value.emit_event.call_args.args[1]['mode'] == 'delta'
+        assert cmd_run(build_parser().parse_args(['run', '--once', '--reset-state'])) == 0
+        assert bridge.return_value.emit_event.call_count == 2

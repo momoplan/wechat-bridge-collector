@@ -66,7 +66,7 @@ python3 -m pip install \
   --disable-pip-version-check \
   --index-url https://mirrors.aliyun.com/pypi/simple/ \
   --target "$release_python" \
-  . pytest
+  . pytest jsonschema
 PYTHONPATH="$WORKSPACE:$release_python" python3 -m pytest -q
 node --test tests/*.test.mjs
 python3 -m py_compile wechat_bridge_collector/*.py

@@ -63,6 +63,10 @@ class CollectorConfig:
         return Path(self.state_dir).expanduser() / "state.json"
 
     @property
+    def contact_sync_path(self) -> Path:
+        return Path(self.state_dir).expanduser() / "contact-sync.sqlite3"
+
+    @property
     def config_path(self) -> Path:
         return Path(self.state_dir).expanduser() / "config.json"
 
