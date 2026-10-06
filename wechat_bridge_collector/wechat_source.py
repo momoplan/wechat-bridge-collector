@@ -800,9 +800,6 @@ class WeChatSource:
                         """,
                         (normalize_limit(limit, 200),),
                     ).fetchall()
-        readable_usernames = self._usernames_with_message_tables(
-            username for username, *_rest in rows if username
-        )
         sessions = []
         for username, unread, summary, ts, msg_type, sender, sender_name in rows:
             if not username:
@@ -816,7 +813,6 @@ class WeChatSource:
                     "conversationId": username,
                     "conversationName": names.get(username, username),
                     "isGroup": is_group,
-                    "historyAvailable": username in readable_usernames,
                     "unreadCount": int(unread or 0),
                     "summary": text,
                     "lastTimestamp": epoch_seconds_to_millis(int(ts)) if int(ts or 0) > 0 else None,
@@ -826,38 +822,6 @@ class WeChatSource:
                 }
             )
         return sessions
-
-    def _usernames_with_message_tables(self, usernames: Iterable[str]) -> set[str]:
-        table_to_username = {
-            "Msg_" + hashlib.md5(username.encode()).hexdigest(): username
-            for username in usernames
-            if username
-        }
-        if not table_to_username:
-            return set()
-
-        table_names = tuple(table_to_username)
-        placeholders = ",".join("?" for _ in table_names)
-        readable: set[str] = set()
-        for rel_key in self.msg_db_keys:
-            with cached_snapshot(self.cache, rel_key) as path:
-                if not path:
-                    continue
-                try:
-                    with closing(sqlite3.connect(path)) as conn:
-                        rows = conn.execute(
-                            f"SELECT name FROM sqlite_master "
-                            f"WHERE type='table' AND name IN ({placeholders})",
-                            table_names,
-                        ).fetchall()
-                except sqlite3.Error:
-                    continue
-            readable.update(
-                table_to_username[table_name]
-                for (table_name,) in rows
-                if table_name in table_to_username
-            )
-        return readable
 
     def bootstrap_state(self, state: CollectorState, backfill_seconds: int = 0) -> None:
         sessions = self.read_session_state()

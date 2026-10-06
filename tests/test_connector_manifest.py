@@ -53,7 +53,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["management"]["operations"]["acquireKeys"]["path"] == "/management/v1/acquire-keys"
     assert manifest["management"]["operations"]["importKeys"]["path"] == "/management/v1/import-keys"
     assert manifest["management"]["operations"]["retrySetup"]["path"] == "/management/v1/retry-setup"
-    for asset in ("index.html", "app.js", "styles.css", "time-range.mjs", "session-model.mjs"):
+    for asset in ("index.html", "app.js", "styles.css", "time-range.mjs"):
         assert (ROOT / "ui" / asset).is_file()
     assert "installAutostart" not in manifest["hooks"]
 
@@ -108,13 +108,6 @@ def test_embedded_ui_converts_date_filters_to_epoch_milliseconds():
     assert 'endTime: elements["history-end"].value' not in app_source
     assert 'startTime: elements["search-start"].value' not in app_source
     assert 'endTime: elements["search-end"].value' not in app_source
-
-
-def test_embedded_ui_disables_summary_only_sessions():
-    app_source = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
-    assert 'from "./session-model.mjs"' in app_source
-    assert "button.disabled = !historyAvailable" in app_source
-    assert 'availability.textContent = "仅摘要"' in app_source
 
 
 def test_jenkins_pipeline_only_validates_and_packages_source():

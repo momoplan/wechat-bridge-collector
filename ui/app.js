@@ -1,5 +1,4 @@
 import { dateInputsToEpochRange } from "./time-range.mjs";
-import { sessionHistoryAvailable } from "./session-model.mjs";
 
 const ids = [
   "runtime-badge", "refresh-button", "reload-status-button", "notice", "error",
@@ -125,15 +124,9 @@ function renderSessions() {
     return;
   }
   visible.forEach((session) => {
-    const historyAvailable = sessionHistoryAvailable(session);
     const button = document.createElement("button");
     button.type = "button";
     button.className = `conversation-item${selectedSession?.conversationId === session.conversationId ? " active" : ""}`;
-    button.disabled = !historyAvailable;
-    if (!historyAvailable) {
-      button.classList.add("summary-only");
-      button.title = "该微信系统会话没有独立聊天记录，仅显示最近消息摘要。";
-    }
     const avatar = document.createElement("span");
     avatar.className = "avatar";
     avatar.textContent = session.isGroup ? "群" : initials(sessionName(session));
@@ -149,12 +142,6 @@ function renderSessions() {
     const time = document.createElement("time");
     time.textContent = formatTime(session.lastTimestamp, true);
     meta.append(time);
-    if (!historyAvailable) {
-      const availability = document.createElement("span");
-      availability.className = "summary-only-label";
-      availability.textContent = "仅摘要";
-      meta.append(availability);
-    }
     const unreadCount = Number(session.unreadCount) || 0;
     if (unreadCount > 0) {
       const unread = document.createElement("span");
@@ -163,9 +150,7 @@ function renderSessions() {
       meta.append(unread);
     }
     button.append(avatar, copy, meta);
-    if (historyAvailable) {
-      button.addEventListener("click", () => void openSession(session));
-    }
+    button.addEventListener("click", () => void openSession(session));
     elements["session-list"].append(button);
   });
 }
@@ -178,7 +163,7 @@ async function loadSessions(preserveSelection = true) {
     sessions = Array.isArray(result?.sessions) ? result.sessions : [];
     const previousId = preserveSelection ? selectedSession?.conversationId : "";
     selectedSession = sessions.find(
-      (item) => item.conversationId === previousId && sessionHistoryAvailable(item),
+      (item) => item.conversationId === previousId,
     ) || null;
     renderSessions();
     setRuntimeBadge("运行中", "success");
@@ -197,10 +182,6 @@ async function loadSessions(preserveSelection = true) {
 }
 
 async function openSession(session) {
-  if (!sessionHistoryAvailable(session)) {
-    setNotice("该微信系统会话没有独立聊天记录，仅显示最近消息摘要。");
-    return;
-  }
   selectedSession = session;
   historyMessages = [];
   historyOffset = 0;

@@ -61,34 +61,26 @@ def write_message_db(path: Path) -> None:
         conn.execute(f"CREATE TABLE [{table_name}] (local_id INTEGER)")
 
 
-def test_recent_sessions_derive_history_availability_from_message_tables(tmp_path: Path):
+def test_recent_sessions_returns_summaries_without_opening_message_databases(tmp_path: Path):
     session_db = tmp_path / "session.db"
-    message_db = tmp_path / "message.db"
     write_session_db(session_db)
-    write_message_db(message_db)
-    source = create_source(session_db, message_db)
+    source = create_source(session_db, tmp_path / "unavailable-message.db")
 
+    class SessionOnlyCache(StaticCache):
+        def get(self, rel_key):
+            assert rel_key == "session/session.db", "session list must not read message shards"
+            return super().get(rel_key)
+
+    source.cache = SessionOnlyCache(source.cache.paths)
     sessions = source.recent_sessions(limit=20)
 
     assert [session["conversationId"] for session in sessions] == [
         "readable@chatroom",
         "brandsessionholder",
     ]
-    assert sessions[0]["historyAvailable"] is True
-    assert sessions[1]["historyAvailable"] is False
+    assert sessions[0]["summary"] == "群聊摘要"
     assert sessions[1]["summary"] == "系统聚合摘要"
-
-
-def test_history_availability_is_generic_for_unknown_session_ids(tmp_path: Path):
-    session_db = tmp_path / "session.db"
-    message_db = tmp_path / "message.db"
-    write_session_db(session_db)
-    write_message_db(message_db)
-    source = create_source(session_db, message_db)
-
-    assert source._usernames_with_message_tables(
-        ["readable@chatroom", "future-system-container"]
-    ) == {"readable@chatroom"}
+    assert all("historyAvailable" not in session for session in sessions)
 
 
 def test_unchanged_session_poll_never_opens_message_database(tmp_path: Path):

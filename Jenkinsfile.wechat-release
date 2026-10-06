@@ -78,7 +78,6 @@ test -f ui/index.html
 test -f ui/app.js
 test -f ui/styles.css
 test -f ui/time-range.mjs
-test -f ui/session-model.mjs
 '''
             }
         }
@@ -107,7 +106,6 @@ grep -Eq '/vendor/wechat-decrypt/find_all_keys[.]py$' <<<"$archive_listing"
 grep -Eq '/vendor/wechat-decrypt/find_all_keys_windows[.]py$' <<<"$archive_listing"
 grep -Eq '/vendor/wechat-decrypt/find_all_keys_macos[.]c$' <<<"$archive_listing"
 grep -Eq '/ui/time-range[.]mjs$' <<<"$archive_listing"
-grep -Eq '/ui/session-model[.]mjs$' <<<"$archive_listing"
 unzip -p "$archive" '*/connector.json' | jq -e --arg version "$CONNECTOR_VERSION" \
   '.version == $version and .source.revision == ("v" + $version)' >/dev/null
 unzip -p "$archive" '*/pyproject.toml' | grep -Fx 'requires-python = ">=3.10"' >/dev/null
