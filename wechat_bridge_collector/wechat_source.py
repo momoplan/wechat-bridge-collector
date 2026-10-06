@@ -864,8 +864,30 @@ class WeChatSource:
         for username in usernames:
             for rel_key, table_name in self._message_tables_for_username(username):
                 cursor_key = self._cursor_key(rel_key, table_name)
-                cursor = state.cursor_for(cursor_key) or Cursor()
-                yield from self._query_table(rel_key, table_name, username, names, cursor, batch_size)
+                # Bound this poll before yielding: new arrivals belong to the
+                # next session poll, and cannot keep this one running forever.
+                with cached_snapshot(self.cache, rel_key) as path:
+                    if not path:
+                        raise DatabaseSnapshotError(f"message snapshot unavailable: {rel_key}")
+                    with closing(sqlite3.connect(path)) as conn:
+                        upper = self._max_cursor_with_conn(conn, table_name)
+                cursor = state.cursor_for(cursor_key)
+                if cursor is None:
+                    # A newly readable table has no accepted checkpoint. Start
+                    # at its current tail instead of broadcasting its history.
+                    state.set_cursor(cursor_key, upper.create_time, upper.local_id)
+                    continue
+                while (cursor.create_time, cursor.local_id) < (upper.create_time, upper.local_id):
+                    candidates, scanned = self._query_table(
+                        rel_key, table_name, username, names, cursor, batch_size, upper,
+                    )
+                    if scanned == cursor:
+                        raise DatabaseSnapshotError(f"message snapshot did not reach its boundary: {rel_key}")
+                    yield from candidates
+                    # Runs only after the consumer accepts every yielded event.
+                    # Filtered rows still advance scanning, including whole pages.
+                    state.set_cursor(cursor_key, scanned.create_time, scanned.local_id)
+                    cursor = scanned
 
     def get_chat_history(
         self,
@@ -1209,12 +1231,12 @@ class WeChatSource:
             return Cursor()
         return Cursor(create_time=int(row[0] or 0), local_id=int(row[1] or 0))
 
-    def _query_table(self, rel_key: str, table_name: str, username: str, names: dict[str, str], cursor: Cursor, batch_size: int) -> list[MessageCandidate]:
+    def _query_table(self, rel_key: str, table_name: str, username: str, names: dict[str, str], cursor: Cursor, batch_size: int, upper: Cursor) -> tuple[list[MessageCandidate], Cursor]:
         candidates: list[MessageCandidate] = []
         self_sender = self.self_sender() if "@chatroom" in username else None
         with cached_snapshot(self.cache, rel_key) as db_path:
             if not db_path:
-                return candidates
+                raise DatabaseSnapshotError(f"message snapshot unavailable: {rel_key}")
             with closing(sqlite3.connect(db_path)) as conn:
                 id_to_username = load_name2id_maps(conn)
                 has_ct = has_column(conn, table_name, "WCDB_CT_message_content")
@@ -1224,18 +1246,20 @@ class WeChatSource:
                     SELECT local_id, local_type, create_time, real_sender_id,
                            message_content, {ct_expr}
                     FROM [{table_name}]
-                    WHERE create_time > ?
-                       OR (create_time = ? AND local_id > ?)
+                    WHERE (create_time > ? OR (create_time = ? AND local_id > ?))
+                      AND (create_time < ? OR (create_time = ? AND local_id <= ?))
                     ORDER BY create_time ASC, local_id ASC
                     LIMIT ?
                     """,
-                    (cursor.create_time, cursor.create_time, cursor.local_id, batch_size),
+                    (cursor.create_time, cursor.create_time, cursor.local_id,
+                     upper.create_time, upper.create_time, upper.local_id, batch_size),
                 ).fetchall()
                 for row in rows:
                     candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username, self_sender)
                     if candidate:
                         candidates.append(candidate)
-        return candidates
+        scanned = Cursor(create_time=int(rows[-1][2] or 0), local_id=int(rows[-1][0] or 0)) if rows else cursor
+        return candidates, scanned
 
     def _build_candidate(self, row: tuple[Any, ...], rel_key: str, table_name: str, username: str, names: dict[str, str], id_to_username: dict[int, str], self_sender: str | None = None) -> MessageCandidate | None:
         local_id, local_type, create_time, real_sender_id, raw_content, ct = row

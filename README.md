@@ -165,7 +165,7 @@ wechat-bridge-collector run
 wechat-bridge-collector --method-port 18083 run
 ```
 
-首次启动默认只建立当前游标，不广播历史消息。需要回放最近历史时显式指定：
+首次启动默认只建立当前游标，不广播历史消息。4.1.1 起，已有状态中新出现或补齐密钥后首次可读的消息表，如果缺少游标，也以该表当前最新消息建立基线，不发送此前历史。已有游标的消息表按固定的本轮末尾位置持续分页，全部消息被本机事件入口接受后才推进会话时间；过滤掉的消息也推进扫描位置，发送失败则保留失败消息以便续传。需要回放最近历史时显式指定：
 
 ```bash
 wechat-bridge-collector run --reset-state --backfill-seconds 300

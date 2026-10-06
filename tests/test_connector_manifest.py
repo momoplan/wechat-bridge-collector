@@ -18,7 +18,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["runtime"]["command"] == "wechat-bridge-collector-python"
     assert not (ROOT / "bin" / "macos-x86_64" / "wechat-bridge-collector").exists()
     assert manifest["runtime"]["startPolicy"] == "manual"
-    assert manifest["version"] == "4.1.0"
+    assert manifest["version"] == "4.1.1"
     assert manifest["version"] == __version__
     assert manifest["source"]["repo"] == "https://gitee.com/zxflimit_admin/wechat-bridge-collector.git"
     assert manifest["source"]["revision"] == f"v{manifest['version']}"
@@ -127,4 +127,4 @@ def test_jenkins_pipeline_only_validates_and_packages_source():
     assert "git ls-remote" not in pipeline
     assert "withCredentials" not in pipeline
     assert "local-app publish" not in pipeline
-    assert "<defaultValue>4.1.0</defaultValue>" in job_config
+    assert "<defaultValue>4.1.1</defaultValue>" in job_config

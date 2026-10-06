@@ -21,7 +21,7 @@ def receipt():
         "errorCode": "0",
         "data": {
             "artifactId": str(UUID(int=1)),
-            "fileName": "wechat-bridge-collector-4.1.0-source.zip",
+            "fileName": "wechat-bridge-collector-4.1.1-source.zip",
             "sizeBytes": 123,
         },
     }
@@ -35,7 +35,7 @@ def test_version_content_declares_source_archive_for_every_supported_host():
     content = MODULE.build_version_content(manifest, receipt(), targets)
 
     assert content["applicationType"] == "connector"
-    assert content["sourceRevision"] == "v4.1.0"
+    assert content["sourceRevision"] == "v4.1.1"
     assert content["manifest"] == manifest
     assert {(item["platform"], item["architecture"]) for item in content["artifacts"]} == {
         ("macos", "universal"),
