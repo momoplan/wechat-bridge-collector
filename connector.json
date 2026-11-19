@@ -131,33 +131,6 @@
     "interfaces": "declared",
     "database": "not_applicable"
   },
-  "remoteCapabilities": [
-    {
-      "name": "wechat.messages.read",
-      "risk": "high",
-      "description": "Read local WeChat message history after the user configures local database access."
-    },
-    {
-      "name": "wechat.messages.search",
-      "risk": "high",
-      "description": "Search local WeChat messages by keyword."
-    },
-    {
-      "name": "wechat.events.messageReceived",
-      "risk": "high",
-      "description": "Emit local WeChat message notifications through Baijimu Local."
-    },
-    {
-      "name": "wechat.contacts.read",
-      "risk": "high",
-      "description": "Read the authorized work WeChat account identity and direct-contact snapshots."
-    },
-    {
-      "name": "wechat.events.contactsChanged",
-      "risk": "high",
-      "description": "Emit initial contact batches once, then only changed contacts with durable retry identity."
-    }
-  ],
   "hooks": {
     "setup": "wechat-bridge-collector-python setup",
     "probe": "wechat-bridge-collector-python probe"
