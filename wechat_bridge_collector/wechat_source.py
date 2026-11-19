@@ -25,6 +25,7 @@ from Crypto.Cipher import AES
 from .key_coverage import check_key_coverage
 from .config import CollectorConfig
 from .self_identity import resolve_self_sender
+from .session_directory import SessionDirectoryEntry
 from .state import CollectorState, Cursor
 
 
@@ -772,21 +773,27 @@ class WeChatSource:
         self._session_state_cache = (signature, state)
         return dict(state)
 
-    def session_directory_titles(self) -> dict[str, str | None]:
-        sessions = dict.fromkeys(self.read_session_state(require_snapshot=True))
+    def session_directory_entries(self) -> list[SessionDirectoryEntry]:
+        activity = self.read_session_state(require_snapshot=True)
+        titles: dict[str, str] = {}
         contacts, _ = self._all_contacts()
         for contact in contacts:
             key = contact["username"]
             if contact["isGroup"]:
                 if not contact["isCurrentMember"] or contact["isDeleted"]:
-                    sessions.pop(key, None)
+                    activity.pop(key, None)
                     continue
-            elif key not in sessions:
+                activity.setdefault(key, 0)
+            elif key not in activity:
                 continue
 
             title = contact["displayName"]
-            sessions[key] = title if title and title != key else None
-        return sessions
+            if title and title != key:
+                titles[key] = title
+        return [
+            SessionDirectoryEntry(key, timestamp, titles.get(key))
+            for key, timestamp in activity.items()
+        ]
 
     def recent_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
         rel_key = os.path.join("session", "session.db")

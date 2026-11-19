@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import sqlite3
 import urllib.request
@@ -22,7 +24,8 @@ def directory_source(tmp_path: Path):
         conn.executemany(
             "INSERT INTO SessionTable VALUES (?, ?)",
             [
-                ("alice", 100), ("inactive@chatroom", 101), ("deleted@chatroom", 102),
+                ("named@chatroom", 400), ("alice", 205),
+                ("inactive@chatroom", 501), ("deleted@chatroom", 502),
                 *((f"session-{index:03}", index + 1) for index in range(205)),
             ],
         )
@@ -63,7 +66,11 @@ def test_directory_paginates_over_real_sessions_and_current_groups(directory_sou
     assert second["nextCursor"] is None
     items = first["items"] + second["items"]
     keys = [item["sessionKey"] for item in items]
-    assert keys == sorted(set(keys))
+    assert keys == [
+        "named@chatroom", "alice",
+        *(f"session-{index:03}" for index in range(204, -1, -1)),
+        "unnamed@chatroom",
+    ]
     assert "inactive@chatroom" not in keys
     assert "deleted@chatroom" not in keys
     assert "bob" not in keys
@@ -81,3 +88,23 @@ def test_directory_reports_unavailable_session_database(directory_source):
     directory_source.cache.paths.pop("session/session.db")
     with pytest.raises(DatabaseSnapshotError, match="session database is unavailable"):
         dispatch_method(directory_source, "listSessionDirectory", {"limit": 10})
+
+
+def test_directory_cursor_keeps_tied_activity_on_the_correct_page(directory_source):
+    def page(**params):
+        return dispatch_method(directory_source, "listSessionDirectory", {"limit": 2, **params})
+
+    first = page()
+    assert [item["sessionKey"] for item in first["items"]] == ["named@chatroom", "alice"]
+    second = page(cursor=first["nextCursor"])
+    assert [item["sessionKey"] for item in second["items"]] == ["session-204", "session-203"]
+
+
+def test_old_cursor_requires_restarting_from_first_page(directory_source):
+    scope = json.dumps([directory_source.account_profile()["accountId"], ""])
+    binding = hashlib.sha256(scope.encode()).hexdigest()
+    old_cursor = base64.urlsafe_b64encode(
+        json.dumps([binding, "alice"], separators=(",", ":")).encode()
+    ).decode()
+    with pytest.raises(ValueError, match="reload the first page"):
+        dispatch_method(directory_source, "listSessionDirectory", {"limit": 10, "cursor": old_cursor})
