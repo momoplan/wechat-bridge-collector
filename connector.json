@@ -2,7 +2,7 @@
   "schemaVersion": "3.0.0",
   "appId": "36d35399-a0cd-11f1-8622-00163e3536cb",
   "name": "WeChat Connector",
-  "version": "4.1.1",
+  "version": "4.2.0",
   "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
   "publisher": {
     "name": "Baijimu",
@@ -11,7 +11,7 @@
   "source": {
     "type": "git",
     "repo": "https://gitee.com/zxflimit_admin/wechat-bridge-collector.git",
-    "revision": "v4.1.1"
+    "revision": "v4.2.0"
   },
   "runtime": {
     "type": "process",
@@ -222,6 +222,23 @@
             "maximum": 200,
             "default": 20
           }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "listSessionDirectory",
+      "description": "List the local WeChat account's discoverable sessions and group names, with search and cursor pagination.",
+      "path": "/invoke/listSessionDirectory",
+      "httpMethod": "POST",
+      "timeoutSecs": 30,
+      "input_schema": {
+        "type": "object",
+        "required": ["limit"],
+        "properties": {
+          "keyword": {"type": "string"},
+          "cursor": {"type": "string", "minLength": 1, "maxLength": 4096},
+          "limit": {"type": "integer", "minimum": 1, "maximum": 200}
         },
         "additionalProperties": false
       }

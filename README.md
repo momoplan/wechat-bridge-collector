@@ -232,6 +232,7 @@ payload 示例：
 - `stopCommand`：停止 PID 文件所指向且经过命令行校验的采集器进程。
 
 - `getRecentSessions`：查询最近会话。
+- `listSessionDirectory`：供渠道查询当前微信账号的会话和仍可访问的群聊。传入 `limit`（1–200）及可选的 `keyword`、`cursor`，返回 `items` 和 `nextCursor`。每项的 `sessionKey` 是原生会话 ID，已解析的群名通过 `title` 返回。下一页传回原关键词和上页的 `nextCursor`。
 - `getAccountProfile`：返回当前授权工作微信账号的稳定账号标识。
 - `getContactSnapshot`：分页读取带检查点的直接好友快照；默认排除群聊。
 - `getContacts`：搜索或列出联系人、群聊。

@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlparse
 
 from . import __version__
 from .config import CollectorConfig
+from .session_directory import list_session_directory
 from .source_runtime import SourceNotReady, SourceRuntime
 from .wechat_source import WeChatSource, normalize_limit
 
@@ -383,6 +384,7 @@ def dispatch_method(source: WeChatSource, method: str, payload: dict[str, Any]) 
             "sessions": source.recent_sessions(limit=p.get("limit", 20)),
             "limit": normalize_limit(p.get("limit", 20), 200),
         },
+        "listSessionDirectory": lambda p: list_session_directory(source, p),
         "getContacts": lambda p: {
             "contacts": source.contacts(
                 query=str(p.get("query") or ""),

@@ -749,10 +749,12 @@ class WeChatSource:
             candidates = [name for _username, name in members if name]
         return list(dict.fromkeys(candidates))
 
-    def read_session_state(self) -> dict[str, int]:
+    def read_session_state(self, *, require_snapshot: bool = False) -> dict[str, int]:
         rel_key = os.path.join("session", "session.db")
         with cached_snapshot(self.cache, rel_key) as path:
             if not path:
+                if require_snapshot:
+                    raise DatabaseSnapshotError("session database is unavailable")
                 return {}
             signature = file_signature(path)
             cached = self._session_state_cache
@@ -769,6 +771,22 @@ class WeChatSource:
         state = {username: int(ts or 0) for username, ts in rows if username}
         self._session_state_cache = (signature, state)
         return dict(state)
+
+    def session_directory_titles(self) -> dict[str, str | None]:
+        sessions = dict.fromkeys(self.read_session_state(require_snapshot=True))
+        contacts, _ = self._all_contacts()
+        for contact in contacts:
+            key = contact["username"]
+            if contact["isGroup"]:
+                if not contact["isCurrentMember"] or contact["isDeleted"]:
+                    sessions.pop(key, None)
+                    continue
+            elif key not in sessions:
+                continue
+
+            title = contact["displayName"]
+            sessions[key] = title if title and title != key else None
+        return sessions
 
     def recent_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
         rel_key = os.path.join("session", "session.db")
