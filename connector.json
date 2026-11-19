@@ -4,10 +4,6 @@
   "name": "WeChat Connector",
   "version": "5.0.0",
   "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
-  "publisher": {
-    "name": "Baijimu",
-    "homepage": "https://baijimu.com"
-  },
   "source": {
     "type": "git",
     "repo": "https://gitee.com/zxflimit_admin/wechat-bridge-collector.git",
