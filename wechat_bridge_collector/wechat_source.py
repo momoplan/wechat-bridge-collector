@@ -10,6 +10,7 @@ import sqlite3
 import struct
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -1266,10 +1267,12 @@ class WeChatSource:
                 id_to_username = load_name2id_maps(conn)
                 has_ct = has_column(conn, table_name, "WCDB_CT_message_content")
                 ct_expr = "WCDB_CT_message_content" if has_ct else "NULL"
+                source_expr = "source" if has_column(conn, table_name, "source") else "NULL"
+                source_ct_expr = "WCDB_CT_source" if has_column(conn, table_name, "WCDB_CT_source") else "NULL"
                 rows = conn.execute(
                     f"""
                     SELECT local_id, local_type, create_time, real_sender_id,
-                           message_content, {ct_expr}
+                           message_content, {ct_expr}, {source_expr}, {source_ct_expr}
                     FROM [{table_name}]
                     WHERE (create_time > ? OR (create_time = ? AND local_id > ?))
                       AND (create_time < ? OR (create_time = ? AND local_id <= ?))
@@ -1280,8 +1283,14 @@ class WeChatSource:
                      upper.create_time, upper.create_time, upper.local_id, batch_size),
                 ).fetchall()
                 for row in rows:
-                    candidate = self._build_candidate(row, rel_key, table_name, username, names, id_to_username, self_sender)
+                    candidate = self._build_candidate(row[:6], rel_key, table_name, username, names, id_to_username, self_sender)
                     if candidate:
+                        if candidate.payload["isGroup"]:
+                            mentioned = parse_mentioned_user_ids(row[6], row[7])
+                            if mentioned is not None:
+                                candidate.payload["mentionedUserIds"] = mentioned
+                                if self_sender is not None:
+                                    candidate.payload["selfUserId"] = self_sender
                         candidates.append(candidate)
         scanned = Cursor(create_time=int(rows[-1][2] or 0), local_id=int(rows[-1][0] or 0)) if rows else cursor
         return candidates, scanned
@@ -1678,6 +1687,24 @@ def decompress_content(content: Any, ct: Any) -> str | None:
     if content is None:
         return ""
     return str(content)
+
+
+def parse_mentioned_user_ids(source: Any, compression_type: Any) -> list[str] | None:
+    xml = decompress_content(source, compression_type)
+    if not xml or re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", xml, re.IGNORECASE):
+        return None
+    try:
+        root = ET.fromstring(xml.strip("\x00\ufeff \r\n\t"))
+    except ET.ParseError:
+        return None
+    if root.tag != "msgsource":
+        return None
+    ids = (
+        user_id.strip()
+        for element in root.findall("atuserlist")
+        for user_id in (element.text or "").split(",")
+    )
+    return list(dict.fromkeys(user_id for user_id in ids if user_id and user_id != "notify@all"))
 
 
 def parse_message_content(content: str, is_group: bool) -> tuple[str, str]:

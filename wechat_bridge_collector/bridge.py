@@ -213,6 +213,17 @@ MESSAGE_EVENT_PAYLOAD_SCHEMA: dict[str, Any] = {
             "type": "boolean",
             "description": "Whether the conversation is a WeChat group chat.",
         },
+        "mentionedUserIds": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "uniqueItems": True,
+            "description": "Individual WeChat usernames from the native group mention list. An empty list means no individual was mentioned; missing means unknown.",
+        },
+        "selfUserId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Native username of the local WeChat user, resolved independently of accountId.",
+        },
         "senderId": {
             "type": "string",
             "description": "Sender WeChat username when resolvable; empty for system/unknown senders.",

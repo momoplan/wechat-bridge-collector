@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import zstandard
 
 from wechat_bridge_collector.app import build_parser, cmd_run
 from wechat_bridge_collector.bridge import BridgeResponse
@@ -100,6 +101,28 @@ def test_filtered_pages_do_not_hide_later_incoming_messages(tmp_path):
     append_rows(path, 403, 410, sender=1)
     assert accept_all(source, state) == []
     assert state.cursor_for(CURSOR_KEY) == Cursor(100, 410)
+
+
+def test_group_events_include_decoded_native_recipients_and_preserve_cursor_order(tmp_path):
+    source, path = source_fixture(tmp_path, 5)
+    metadata = [
+        (b"<msgsource><atuserlist><![CDATA[self,peer,notify@all,self]]></atuserlist></msgsource>", 2),
+        (b"<msgsource><atuserlist>peer</atuserlist></msgsource>", 3),
+        (b"<msgsource><silence>0</silence></msgsource>", 4),
+        (b"<msgsource>", 5),
+    ]
+    with sqlite3.connect(path) as db:
+        db.execute(f"ALTER TABLE [{TABLE}] ADD COLUMN source BLOB")
+        db.execute(f"ALTER TABLE [{TABLE}] ADD COLUMN WCDB_CT_source INTEGER")
+        compressed = [(zstandard.ZstdCompressor().compress(v), pk) for v, pk in metadata]
+        db.executemany(f"UPDATE [{TABLE}] SET source=?, WCDB_CT_source=4 WHERE local_id=?", compressed)
+    state = existing_state()
+    events = list(source.iter_new_messages(state, [CHAT], 200))
+    assert [x.payload.get("mentionedUserIds") for x in events] == [["self", "peer"], ["peer"], [], None]
+    assert [x.payload.get("selfUserId") for x in events] == ["self", "self", "self", None]
+    assert [x.cursor for x in events] == [Cursor(100, local_id) for local_id in range(2, 6)]
+    assert all(x.payload["accountId"] == "account" for x in events)
+    assert state.cursor_for(CURSOR_KEY) == Cursor(100, 5)
 
 
 def test_poll_is_bounded_when_new_messages_arrive_during_delivery(tmp_path):
