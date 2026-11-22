@@ -121,37 +121,67 @@ def test_pair_and_proxy_preserve_query_contract(tmp_path):
             worker.join()
 
 
-@pytest.mark.parametrize("bridge_reply", ["no_subscribers", "queued", "wrong_receipt", "failure"])
-def test_confirmation_requires_matching_queued_receipt(tmp_path, bridge_reply):
+@pytest.mark.parametrize("event_name", [MESSAGE, "contactsChanged"])
+@pytest.mark.parametrize("bridge_reply", ["no_subscribers", "queued", "wrong_receipt", "failure", "timeout"])
+def test_event_confirmation_matches_the_delivery_result(tmp_path, monkeypatch, event_name, bridge_reply):
+    event = {**EVENT, "event": event_name}
     acknowledged = []
+    submitted = []
 
     def source(path, headers, body):
         if path == "/v1/status":
             return 200, {"sourceAccess": {"status": "ready"}}
         if path == "/v1/events/next":
-            return 200, {"data": EVENT}
+            return 200, {"data": event}
         acknowledged.append(body)
         return 200, {"data": None}
 
-    def bridge(path, headers, body):
+    def record_submission(path, headers, body):
         assert path == "/v1/local-app-events"
         assert headers["Authorization"] == "Bearer event-token"
-        assert body == {**EVENT, "appId": "registered-app-id"}
+        assert body == {**event, "appId": "registered-app-id"}
+        submitted.append(body["eventId"])
+
+    def bridge(path, headers, body):
+        record_submission(path, headers, body)
         if bridge_reply == "failure":
             return 503, {}
-        event_id = "wrong" if bridge_reply == "wrong_receipt" else EVENT["eventId"]
-        return 202, {"status": bridge_reply, "eventId": event_id, "appId": body["appId"]}
+        if bridge_reply == "wrong_receipt":
+            return 202, {"status": "no_subscribers", "eventId": "wrong", "appId": body["appId"]}
+        return 202, {"status": bridge_reply, "eventId": event["eventId"], "appId": body["appId"]}
+
+    if bridge_reply == "timeout":
+        class TimedOutConnection:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def request(self, method, path, body, headers):
+                assert method == "POST"
+                record_submission(path, headers, json.loads(body))
+
+            def getresponse(self):
+                raise TimeoutError
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("wechat_bridge_collector.bridge.HTTPConnection", TimedOutConnection)
 
     with service(pairable(source)) as source_port, service(handler_for(bridge)) as bridge_port:
         connector = make_connector(tmp_path, bridge_port)
         connector.pair(pairing_request(source_port))
-        status = connector.forward_one(MESSAGE)
-        if bridge_reply == "queued":
-            assert acknowledged == [{"event": MESSAGE, "eventId": EVENT["eventId"]}]
-            assert status == "queued"
+        result = connector.forward_one(event_name)
+
+        should_confirm = bridge_reply == "queued" or (bridge_reply == "no_subscribers" and event_name == MESSAGE)
+        if should_confirm:
+            assert acknowledged == [{"event": event_name, "eventId": event["eventId"]}]
+            assert result == ("queued" if bridge_reply == "queued" else "skipped_no_subscribers")
+            assert submitted == [event["eventId"]]
         else:
+            assert result == ("no_subscribers" if bridge_reply == "no_subscribers" else "rejected")
+            assert connector.forward_one(event_name) == result
             assert acknowledged == []
-            assert status == ("no_subscribers" if bridge_reply == "no_subscribers" else "rejected")
+            assert submitted == [event["eventId"], event["eventId"]]
 
 
 @pytest.mark.parametrize("address", [

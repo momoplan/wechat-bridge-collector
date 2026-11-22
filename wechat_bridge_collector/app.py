@@ -17,6 +17,9 @@ from .collector_client import CollectorClient, CollectorRejected, CollectorUnava
 from .config import ConnectorConfig
 
 
+COMPLETED_DELIVERY = {"queued", "skipped_no_subscribers"}
+
+
 class Connector:
     def __init__(self, config: ConnectorConfig):
         self.config = config
@@ -70,7 +73,7 @@ class Connector:
                 self.relay_status[event_name] = self.forward_one(event_name)
             except (CollectorUnavailable, CollectorRejected, OSError, ValueError):
                 self.relay_status[event_name] = "unavailable"
-            if self.relay_status[event_name] != "queued":
+            if self.relay_status[event_name] not in COMPLETED_DELIVERY:
                 self.stop.wait(1)
 
     def forward_one(self, event_name: str) -> str:
@@ -82,10 +85,12 @@ class Connector:
                 or not isinstance(event.get("eventId"), str) or not event["eventId"]
                 or not isinstance(event.get("payload"), dict)):
             return "invalid_event"
-        receipt = self.bridge.submit(event)
-        if receipt == "queued":
+        result = self.bridge.submit(event)
+        if result == "no_subscribers" and event_name == "messageReceived":
+            result = "skipped_no_subscribers"
+        if result in COMPLETED_DELIVERY:
             collector.request("/v1/events/ack", {"event": event_name, "eventId": event["eventId"]})
-        return receipt
+        return result
 
 
 def create_server(connector: Connector, port: int) -> ThreadingHTTPServer:

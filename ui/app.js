@@ -402,6 +402,7 @@ async function loadStatus(clearNotice = true) {
       queued: "已由百积木受理",
       idle: "暂无待发事件",
       no_subscribers: "等待订阅，事件已保留",
+      skipped_no_subscribers: "无订阅者，已结束投递",
       unavailable: "等待连接",
       rejected: "投递待重试",
       invalid_event: "采集器事件格式无效",
