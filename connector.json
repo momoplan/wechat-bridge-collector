@@ -3,7 +3,7 @@
   "appId": "36d35399-a0cd-11f1-8622-00163e3536cb",
   "name": "WeChat Connector",
   "version": "5.1.0",
-  "description": "Read local WeChat 4.x messages on this computer and expose read-only query methods through Baijimu Local.",
+  "description": "Connect a standalone desktop WeChat collector and expose its read-only queries and events through Baijimu Local.",
   "source": {
     "type": "git",
     "repo": "https://gitee.com/zxflimit_admin/wechat-bridge-collector.git",
@@ -13,7 +13,7 @@
     "type": "process",
     "command": "wechat-bridge-collector-python",
     "args": [
-      "start"
+      "run"
     ],
     "startPolicy": "manual",
     "healthCheck": {
@@ -24,22 +24,15 @@
     },
     "stopArgs": [
       "stop"
-    ]
+    ],
+    "processOwnership": "host"
   },
   "hostRequirements": {
     "minimumVersion": "0.6.0",
-    "capabilities": []
+    "capabilities": [
+      "connector.process.host-managed.v1"
+    ]
   },
-  "permissions": [
-    {
-      "id": "macos.fullDiskAccess",
-      "title": "完全磁盘访问",
-      "description": "读取微信沙盒中的本地数据库；请把百积木加入系统设置的完全磁盘访问列表。",
-      "platforms": [
-        "macos"
-      ]
-    }
-  ],
   "legacyAutostartLabels": [
     "com.baijimu.wechat-bridge-collector"
   ],
@@ -53,18 +46,6 @@
       "runtimeState": {
         "method": "GET",
         "path": "/management/v1/state"
-      },
-      "acquireKeys": {
-        "method": "POST",
-        "path": "/management/v1/acquire-keys"
-      },
-      "importKeys": {
-        "method": "POST",
-        "path": "/management/v1/import-keys"
-      },
-      "retrySetup": {
-        "method": "POST",
-        "path": "/management/v1/retry-setup"
       },
       "getRecentSessions": {
         "method": "POST",
@@ -93,6 +74,10 @@
       "getMessageById": {
         "method": "POST",
         "path": "/management/v1/message"
+      },
+      "pairCollector": {
+        "method": "POST",
+        "path": "/management/v1/pair-collector"
       }
     }
   },
@@ -104,32 +89,13 @@
   },
   "configSchema": {
     "type": "object",
-    "properties": {
-      "methodPort": {
-        "type": "integer",
-        "default": 18082,
-        "minimum": 1024,
-        "maximum": 65535
-      },
-      "includeText": {
-        "type": "boolean",
-        "default": true
-      },
-      "includeOutgoing": {
-        "type": "boolean",
-        "default": true
-      }
-    },
+    "properties": {},
     "additionalProperties": false
   },
   "upgradeReview": {
     "configuration": "declared",
     "interfaces": "declared",
     "database": "not_applicable"
-  },
-  "hooks": {
-    "setup": "wechat-bridge-collector-python setup",
-    "probe": "wechat-bridge-collector-python probe"
   },
   "transport": {
     "type": "http",

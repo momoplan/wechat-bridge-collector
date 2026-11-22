@@ -25,7 +25,7 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["runtime"]["command"].endswith("-python")
     assert manifest["hostRequirements"] == {
         "minimumVersion": "0.6.0",
-        "capabilities": [],
+        "capabilities": ["connector.process.host-managed.v1"],
     }
     assert manifest["upgradeReview"] == {
         "configuration": "declared",
@@ -34,11 +34,10 @@ def test_connector_manifest_declares_local_app_capabilities():
     }
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'requires-python = ">=3.10"' in pyproject
-    assert (ROOT / "requirements.lock").read_text(encoding="utf-8").splitlines() == [
-        "pycryptodome==3.23.0",
-        "zstandard==0.25.0",
-    ]
-    assert manifest["permissions"][0]["id"] == "macos.fullDiskAccess"
+    assert not (ROOT / "requirements.lock").read_text(encoding="utf-8").strip()
+    assert not manifest.get("permissions")
+    assert manifest["runtime"]["processOwnership"] == "host"
+    assert manifest["runtime"]["args"] == ["run"]
     assert manifest["legacyAutostartLabels"] == ["com.baijimu.wechat-bridge-collector"]
     assert manifest["ui"] == {
         "type": "embedded",
@@ -50,36 +49,12 @@ def test_connector_manifest_declares_local_app_capabilities():
     assert manifest["management"]["operations"]["getChatHistory"]["path"] == "/management/v1/chat-history"
     assert manifest["management"]["operations"]["getAccountProfile"]["path"] == "/management/v1/account-profile"
     assert manifest["management"]["operations"]["getContactSnapshot"]["path"] == "/management/v1/contact-snapshot"
-    assert manifest["management"]["operations"]["acquireKeys"]["path"] == "/management/v1/acquire-keys"
-    assert manifest["management"]["operations"]["importKeys"]["path"] == "/management/v1/import-keys"
-    assert manifest["management"]["operations"]["retrySetup"]["path"] == "/management/v1/retry-setup"
+    operations = manifest["management"]["operations"]
+    assert operations["pairCollector"]["path"] == "/management/v1/pair-collector"
+    assert not {"acquireKeys", "importKeys", "retrySetup"} & operations.keys()
     for asset in ("index.html", "app.js", "styles.css", "time-range.mjs"):
         assert (ROOT / "ui" / asset).is_file()
-    assert "installAutostart" not in manifest["hooks"]
-
-    upstream = json.loads(
-        (ROOT / "vendor" / "wechat-decrypt.upstream.json").read_text(encoding="utf-8")
-    )
-    dependency_files = (
-        "config.py",
-        "find_all_keys.py",
-        "find_all_keys_linux.py",
-        "find_all_keys_macos.c",
-        "find_all_keys_windows.py",
-        "key_scan_common.py",
-        "key_utils.py",
-    )
-    assert upstream == {
-        "repository": "https://github.com/ylytdeng/wechat-decrypt.git",
-        "commit": "5e0eaa33fa1e77e533392db394644216c5ea6824",
-        "normalization": "text line endings and trailing whitespace",
-        "files": list(dependency_files),
-    }
-    vendor_dir = ROOT / "vendor" / "wechat-decrypt"
-    assert {path.name for path in vendor_dir.iterdir()} == set(dependency_files)
-    for dependency_file in dependency_files:
-        assert (vendor_dir / dependency_file).is_file()
-    assert not (ROOT / ".gitmodules").exists()
+    assert not list((ROOT / "vendor").rglob("find_all_keys*"))
 
     assert manifest["transport"]["type"] == "http"
     assert manifest["runtime"]["stopArgs"] == ["stop"]

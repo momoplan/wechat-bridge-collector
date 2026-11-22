@@ -9,8 +9,7 @@ const ids = [
   "contact-form", "contact-query", "contact-list", "search-count", "search-form",
   "search-keyword", "search-scope", "current-conversation-option", "search-start",
   "search-end", "search-button", "search-results", "load-more-search", "status-grid",
-  "setup-panel", "setup-badge", "setup-title", "setup-detail", "acquire-keys-button",
-  "import-keys-button", "keys-file-input", "retry-setup-button",
+  "setup-badge", "setup-title", "setup-detail", "pairing-file", "pair-button", "pairing-form",
 ];
 const elements = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
 const product = document.body.dataset.product || "本地消息";
@@ -27,8 +26,6 @@ let searchOffset = 0;
 let searchHasMore = false;
 let lastSearchPayload = null;
 let busy = new Set();
-let setupUnavailable = false;
-let setupReady = false;
 
 function bridge() {
   const api = window.baijimuLocalApp;
@@ -72,9 +69,7 @@ function setBusy(key, value) {
   elements["load-older-button"].disabled = busy.has("history");
   elements["search-button"].disabled = busy.has("search");
   elements["load-more-search"].disabled = busy.has("search");
-  elements["acquire-keys-button"].disabled = busy.has("setup") || setupUnavailable;
-  elements["import-keys-button"].disabled = busy.has("setup") || setupUnavailable;
-  elements["retry-setup-button"].disabled = busy.has("setup") || setupUnavailable || setupReady;
+  elements["pair-button"].disabled = busy.has("pair");
 }
 
 function switchView(view) {
@@ -382,25 +377,18 @@ function renderSearchResults() {
 }
 
 function renderSetup(sourceAccess) {
-  const status = text(sourceAccess?.status, "keys_missing");
-  const configurations = {
-    ready: ["已就绪", "success", "密钥和数据库均已就绪", "现在可以读取本地微信消息。"],
-    keys_missing: ["需要密钥", "warning", "尚未获取数据库密钥", "点击“自动获取密钥”，也可以导入已有的 all_keys.json。"],
-    acquiring: ["获取中", "warning", "正在获取数据库密钥", "请保持微信已登录并运行。完成后界面会自动刷新。"],
-    checking: ["检测中", "warning", "正在检查本机配置", "正在验证密钥、数据库目录和完全磁盘访问权限。"],
-    failed: ["需要处理", "danger", "密钥或数据库尚未就绪", text(sourceAccess?.detail, "请检查完全磁盘访问权限后重试。")],
-    error: ["需要处理", "danger", "数据库访问失败", text(sourceAccess?.detail, "请检查完全磁盘访问权限后重试。")],
+  const states = {
+    ready: ["已连接", "success", "微信采集器已就绪"],
+    checking: ["检测中", "warning", "采集器正在检查数据源"],
+    failed: ["采集异常", "danger", "请检查独立采集器"],
+    unavailable: ["未连接", "warning", "等待连接独立采集器"],
   };
-  const [label, tone, title, detail] = configurations[status] || configurations.failed;
+  const [label, tone, title] = states[sourceAccess?.status] || states.unavailable;
   elements["setup-badge"].textContent = label;
   elements["setup-badge"].className = `status-badge ${tone}`;
   elements["setup-title"].textContent = title;
-  elements["setup-detail"].textContent = detail;
-  setupUnavailable = sourceAccess?.busy === true || status === "acquiring" || status === "checking";
-  setupReady = status === "ready";
-  elements["acquire-keys-button"].disabled = setupUnavailable;
-  elements["import-keys-button"].disabled = setupUnavailable;
-  elements["retry-setup-button"].disabled = setupUnavailable || setupReady;
+  elements["setup-detail"].textContent = text(sourceAccess?.detail);
+  setRuntimeBadge(label, tone);
 }
 
 async function loadStatus(clearNotice = true) {
@@ -409,103 +397,45 @@ async function loadStatus(clearNotice = true) {
   elements["status-grid"].replaceChildren(statusItem("服务", "正在检测…"));
   try {
     const state = await bridge().invoke("runtimeState");
-    const probe = state?.probe && typeof state.probe === "object" ? state.probe : {};
-    const sourceAccess = state?.sourceAccess && typeof state.sourceAccess === "object"
-      ? state.sourceAccess
-      : { status: "ready", detail: "" };
-    const sourceReady = sourceAccess.status === "ready";
-    renderSetup(sourceAccess);
-    const sourceStatus = sourceReady
-      ? "已就绪"
-      : sourceAccess.status === "keys_missing"
-        ? "缺少密钥"
-        : sourceAccess.status === "acquiring"
-          ? "正在获取密钥"
-          : sourceAccess.status === "failed" || sourceAccess.status === "error"
-            ? "等待处理后重试"
-            : "正在检查权限";
-    const sourcePending = sourceReady ? null : "待数据库就绪";
+    renderSetup(state?.sourceAccess);
+    const deliveryStates = {
+      queued: "已由百积木受理",
+      idle: "暂无待发事件",
+      no_subscribers: "等待订阅，事件已保留",
+      unavailable: "等待连接",
+      rejected: "投递待重试",
+      invalid_event: "采集器事件格式无效",
+    };
     const values = [
       ["应用", text(state?.product, product)],
       ["版本", text(state?.version, "未知")],
-      ["服务名", text(state?.serviceName, "未知")],
-      ["数据库状态", sourceStatus],
-      ["状态说明", text(sourceAccess.detail, sourceReady ? "本地数据库可读取" : "请查看上方具体原因并处理后重新检测")],
-      ["数据库", text(probe.db_dir, "未配置")],
-      ["密钥文件", text(probe.keys_file, "未配置")],
-      ["密钥数量", String(probe.key_count ?? 0)],
-      ["会话数量", sourcePending ?? String(probe.session_count ?? probe.conversation_count ?? 0)],
-      ["联系人数量", sourcePending ?? String(probe.contact_name_count ?? 0)],
-      ["消息表数量", sourcePending ?? String(probe.message_table_count ?? 0)],
-      ["消息数量", sourcePending ?? (probe.message_count == null ? "按需读取" : String(probe.message_count))],
-      ["消息正文", state?.includeText === false ? "不读取" : "读取"],
-      ["发出消息", state?.includeOutgoing === false ? "不包含" : "包含"],
+      ["消息投递", text(deliveryStates[state?.delivery?.messageReceived], "等待检测")],
+      ["联系人同步", text(deliveryStates[state?.delivery?.contactsChanged], "等待检测")],
     ];
     elements["status-grid"].replaceChildren(...values.map(([label, value]) => statusItem(label, value)));
     elements["status-grid"].dataset.loaded = "true";
-    setRuntimeBadge(sourceReady ? "运行中" : sourceAccess.status === "keys_missing" ? "需要密钥" : "数据源未就绪", sourceReady ? "success" : "warning");
-    return state;
   } catch (error) {
-    setRuntimeBadge("检测失败", "danger");
+    renderSetup({status: "unavailable"});
     setNotice(errorMessage(error), true);
     elements["status-grid"].replaceChildren(statusItem("检测结果", "失败"));
   } finally {
     setBusy("status", false);
   }
-  return null;
 }
 
-function delay(milliseconds) {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-}
-
-async function pollSetup() {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    await delay(1500);
-    const state = await loadStatus(false);
-    const status = state?.sourceAccess?.status;
-    if (status === "ready") {
-      setNotice("密钥和数据库已就绪，无需重启 Connector。");
-      await loadSessions(true);
-      return;
-    }
-    if (status === "failed" || status === "error" || status === "keys_missing") return;
-  }
-}
-
-async function runSetupOperation(operation, payload = {}) {
-  if (busy.has("setup")) return;
-  setBusy("setup", true);
+async function pairCollector(event) {
+  event.preventDefault();
+  if (busy.has("pair")) return;
+  setBusy("pair", true);
   setNotice();
   try {
-    await bridge().invoke(operation, payload);
-    setNotice(operation === "importKeys" ? "密钥文件已安全导入，正在验证数据库。" : "操作已开始，请保持客户端运行。");
+    await bridge().invoke("pairCollector", {pairingFile: elements["pairing-file"].value.trim()});
+    setNotice("配对已保存。");
     await loadStatus(false);
-    await pollSetup();
   } catch (error) {
     setNotice(errorMessage(error), true);
-    await loadStatus(false);
   } finally {
-    setBusy("setup", false);
-  }
-}
-
-async function importKeyFile(file) {
-  if (!file) return;
-  if (file.size > 256 * 1024) {
-    setNotice("密钥文件超过 256KB，请确认选择的是 all_keys.json。", true);
-    return;
-  }
-  try {
-    const document = JSON.parse(await file.text());
-    if (!document || Array.isArray(document) || typeof document !== "object") {
-      throw new Error("密钥文件必须是 JSON object。");
-    }
-    await runSetupOperation("importKeys", { document });
-  } catch (error) {
-    setNotice(`无法导入密钥文件：${errorMessage(error)}`, true);
-  } finally {
-    elements["keys-file-input"].value = "";
+    setBusy("pair", false);
   }
 }
 
@@ -536,10 +466,7 @@ elements["refresh-button"].addEventListener("click", () => {
   else void loadSessions(true);
 });
 elements["reload-status-button"].addEventListener("click", () => void loadStatus());
-elements["acquire-keys-button"].addEventListener("click", () => void runSetupOperation("acquireKeys"));
-elements["retry-setup-button"].addEventListener("click", () => void runSetupOperation("retrySetup"));
-elements["import-keys-button"].addEventListener("click", () => elements["keys-file-input"].click());
-elements["keys-file-input"].addEventListener("change", () => void importKeyFile(elements["keys-file-input"].files?.[0]));
+elements["pairing-form"].addEventListener("submit", pairCollector);
 elements["apply-history-filter"].addEventListener("click", () => void loadHistory(false));
 elements["load-older-button"].addEventListener("click", () => void loadHistory(true));
 elements["contact-form"].addEventListener("submit", (event) => {

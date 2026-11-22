@@ -154,28 +154,21 @@
         <section id="setup-panel" class="panel setup-panel">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">LOCAL ACCESS</p>
-              <h2>密钥与数据库授权</h2>
-              <p>密钥只保存在 Connector 私有目录中。自动获取失败时，可导入已有的 all_keys.json。</p>
+              <h2>连接微信采集器</h2>
+              <p>启动独立微信采集器后，填写它显示的配对文件路径。</p>
             </div>
             <span id="setup-badge" class="status-badge warning">正在检查</span>
           </div>
           <div class="setup-layout">
             <div>
-              <strong id="setup-title">正在检查本机配置</strong>
-              <p id="setup-detail">请稍候，Connector 正在检查密钥和微信数据库访问权限。</p>
-              <ol class="permission-steps">
-                <li>保持微信已登录并正在运行。</li>
-                <li>在“系统设置 → 隐私与安全性 → 完全磁盘访问权限”中允许百积木。</li>
-                <li>授权后回到这里点击“重新检测”；如果自动获取需要管理员权限，请按界面提示操作。</li>
-              </ol>
+              <strong id="setup-title">正在检查采集器</strong>
+              <p id="setup-detail"></p>
             </div>
-            <div class="setup-actions">
-              <button id="acquire-keys-button" class="button primary" type="button">自动获取密钥</button>
-              <button id="import-keys-button" class="button secondary" type="button">导入密钥文件</button>
-              <input id="keys-file-input" class="sr-only" type="file" accept=".json,application/json" />
-              <button id="retry-setup-button" class="button secondary" type="button">重新检测</button>
-            </div>
+            <form id="pairing-form" class="setup-actions">
+              <label for="pairing-file">配对文件路径</label>
+              <input id="pairing-file" type="text" required autocomplete="off" spellcheck="false" />
+              <button id="pair-button" class="button primary" type="submit">连接</button>
+            </form>
           </div>
         </section>
         <section class="panel">

@@ -33,20 +33,16 @@ test "$(jq -r 'has("id")' connector.json)" = "false"
 test "$(jq -r '.hostRequirements.minimumVersion' connector.json)" = "$MIN_BRIDGE_VERSION"
 test "$(jq -r '.runtime.command' connector.json)" = "wechat-bridge-collector-python"
 test "$(jq -r '.runtime.startPolicy' connector.json)" = "manual"
+test "$(jq -r '.runtime.processOwnership' connector.json)" = "host"
+test "$(jq -r '.runtime.args[0]' connector.json)" = "run"
+test -f wechat_bridge_collector/collector_client.py
 test "$(jq -r '.ui.entry' connector.json)" = "ui/index.html"
 test "$(jq -r '.management.auth.type' connector.json)" = "connector_token"
 test "$(sed -n 's/^version = "\\([^" ]*\\)"/\\1/p' pyproject.toml | head -1)" = "$CONNECTOR_VERSION"
 test "$(sed -n 's/^requires-python = "\\([^" ]*\\)"/\\1/p' pyproject.toml)" = ">=3.10"
 test "$(sed -n 's/^__version__ = "\\([^" ]*\\)"/\\1/p' wechat_bridge_collector/__init__.py)" = "$CONNECTOR_VERSION"
-test "$(sed -n 's/^version = "\\([^" ]*\\)"/\\1/p' Cargo.toml | head -1)" = "$CONNECTOR_VERSION"
 test ! -e .gitmodules
 test ! -e bin/macos-x86_64/wechat-bridge-collector
-test -f vendor/wechat-decrypt.upstream.json
-test "$(jq -r '.commit' vendor/wechat-decrypt.upstream.json)" = "5e0eaa33fa1e77e533392db394644216c5ea6824"
-test -f vendor/wechat-decrypt/key_utils.py
-test -f vendor/wechat-decrypt/find_all_keys.py
-test -f vendor/wechat-decrypt/find_all_keys_windows.py
-test -f vendor/wechat-decrypt/find_all_keys_macos.c
 test ! -e wechat_bridge_collector/scripts/macos/com.baijimu.wechat-bridge-collector.plist
 ! jq -e '.hooks.installAutostart' connector.json >/dev/null
 case "$CONNECTOR_VERSION" in *[!0-9.]*|'') exit 1 ;; esac
@@ -70,7 +66,6 @@ python3 -m pip install \
 PYTHONPATH="$WORKSPACE:$release_python" python3 -m pytest -q
 node --test tests/*.test.mjs
 python3 -m py_compile wechat_bridge_collector/*.py
-bash -n agent-skill/scripts/setup_macos.sh
 jq -e . connector.json >/dev/null
 test "$(jq -r '.transport.type' connector.json)" = "http"
 test "$(jq -r '.events[0].name' connector.json)" = "messageReceived"
@@ -101,10 +96,6 @@ printf '%s  %s\n' "$checksum" "$archive_name" > "$archive.sha256"
 archive_listing="$(unzip -Z1 "$archive")"
 grep -Eq '/connector[.]json$' <<<"$archive_listing"
 grep -Eq '/pyproject[.]toml$' <<<"$archive_listing"
-grep -Eq '/vendor/wechat-decrypt/key_utils[.]py$' <<<"$archive_listing"
-grep -Eq '/vendor/wechat-decrypt/find_all_keys[.]py$' <<<"$archive_listing"
-grep -Eq '/vendor/wechat-decrypt/find_all_keys_windows[.]py$' <<<"$archive_listing"
-grep -Eq '/vendor/wechat-decrypt/find_all_keys_macos[.]c$' <<<"$archive_listing"
 grep -Eq '/ui/time-range[.]mjs$' <<<"$archive_listing"
 unzip -p "$archive" '*/connector.json' | jq -e --arg version "$CONNECTOR_VERSION" \
   '.version == $version and .source.revision == ("v" + $version)' >/dev/null
