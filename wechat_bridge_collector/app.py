@@ -4,6 +4,7 @@ import argparse
 import hmac
 import json
 import os
+import secrets
 import tempfile
 import threading
 import time
@@ -21,40 +22,38 @@ class Connector:
         self.config = config
         self.settings = config.data_dir / "collector-connection.json"
         self.stop = threading.Event()
+        self.pair_lock = threading.Lock()
         self.relay_status = {}
         self.bridge = BridgeClient(config)
         self.events = tuple(event["name"] for event in config.manifest["events"])
 
     def client(self) -> CollectorClient:
         try:
-            path = Path(json.loads(self.settings.read_text(encoding="utf-8"))["pairingFile"])
+            connection = json.loads(self.settings.read_text(encoding="utf-8"))
+            return CollectorClient(connection["address"], connection["token"])
         except FileNotFoundError as exc:
             raise CollectorUnavailable("请先连接独立微信采集器") from exc
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise CollectorUnavailable("采集器配对配置无效，请重新配对") from exc
-        return CollectorClient(path)
 
     def pair(self, payload: dict) -> dict:
-        value = payload.get("pairingFile")
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("请输入采集器配对文件路径")
-        path = Path(value.strip()).expanduser()
-        if not path.is_absolute():
-            raise ValueError("请输入本机配对文件的绝对路径")
-        status = CollectorClient(path).status()
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.settings.parent, delete=False) as file:
-            temporary = Path(file.name)
+        client = CollectorClient(payload.get("address"), secrets.token_urlsafe(32))
+        code = payload.get("code")
+        with self.pair_lock:
+            temporary = None
             try:
-                json.dump({"pairingFile": str(path)}, file, ensure_ascii=False)
-                file.flush()
-            except BaseException:
-                file.close()
-                temporary.unlink(missing_ok=True)
-                raise
-        try:
-            temporary.replace(self.settings)
-        finally:
-            temporary.unlink(missing_ok=True)
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=self.settings.parent, delete=False
+                ) as file:
+                    temporary = Path(file.name)
+                    json.dump({"address": client.address, "token": client.token}, file)
+                    file.flush()
+                    os.fsync(file.fileno())
+                status = client.pair(code)
+                temporary.replace(self.settings)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
         return {"sourceAccess": status}
 
     def status(self) -> dict:

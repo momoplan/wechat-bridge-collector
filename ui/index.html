@@ -155,7 +155,7 @@
           <div class="section-heading">
             <div>
               <h2>连接微信采集器</h2>
-              <p>启动独立微信采集器后，填写它显示的配对文件路径。</p>
+              <p>填写独立微信采集器显示的本机 HTTP 地址和一次性配对码。</p>
             </div>
             <span id="setup-badge" class="status-badge warning">正在检查</span>
           </div>
@@ -165,8 +165,10 @@
               <p id="setup-detail"></p>
             </div>
             <form id="pairing-form" class="setup-actions">
-              <label for="pairing-file">配对文件路径</label>
-              <input id="pairing-file" type="text" required autocomplete="off" spellcheck="false" />
+              <label for="collector-address">本机 HTTP 地址</label>
+              <input id="collector-address" type="url" required autocomplete="off" spellcheck="false" />
+              <label for="pairing-code">一次性配对码</label>
+              <input id="pairing-code" type="password" required autocomplete="off" spellcheck="false" />
               <button id="pair-button" class="button primary" type="submit">连接</button>
             </form>
           </div>

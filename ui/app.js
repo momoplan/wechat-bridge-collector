@@ -9,7 +9,7 @@ const ids = [
   "contact-form", "contact-query", "contact-list", "search-count", "search-form",
   "search-keyword", "search-scope", "current-conversation-option", "search-start",
   "search-end", "search-button", "search-results", "load-more-search", "status-grid",
-  "setup-badge", "setup-title", "setup-detail", "pairing-file", "pair-button", "pairing-form",
+  "setup-badge", "setup-title", "setup-detail", "collector-address", "pairing-code", "pair-button", "pairing-form",
 ];
 const elements = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
 const product = document.body.dataset.product || "本地消息";
@@ -429,7 +429,11 @@ async function pairCollector(event) {
   setBusy("pair", true);
   setNotice();
   try {
-    await bridge().invoke("pairCollector", {pairingFile: elements["pairing-file"].value.trim()});
+    await bridge().invoke("pairCollector", {
+      address: elements["collector-address"].value.trim(),
+      code: elements["pairing-code"].value.trim(),
+    });
+    elements["pairing-code"].value = "";
     setNotice("配对已保存。");
     await loadStatus(false);
   } catch (error) {
