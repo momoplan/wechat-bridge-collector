@@ -345,3 +345,6 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px c
   .setup-actions { min-width: 0; }
   .privacy-note { align-items: flex-start; flex-direction: column; }
 }
+
+.selected-upload { display: grid; gap: .35rem; margin-block-start: .5rem; }
+.selected-upload output { overflow-wrap: anywhere; }

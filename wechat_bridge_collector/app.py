@@ -15,6 +15,7 @@ from pathlib import Path
 from .bridge import BridgeClient
 from .collector_client import CollectorClient, CollectorRejected, CollectorUnavailable
 from .config import ConnectorConfig
+from .selected_upload_session import SelectedUploads
 
 
 COMPLETED_DELIVERY = {"queued", "skipped_no_subscribers"}
@@ -28,6 +29,7 @@ class Connector:
         self.pair_lock = threading.Lock()
         self.relay_status = {}
         self.bridge = BridgeClient(config)
+        self.uploads = SelectedUploads(lambda method, args: self.client().query(method, args))
         self.events = tuple(event["name"] for event in config.manifest["events"])
 
     def client(self) -> CollectorClient:
@@ -150,6 +152,9 @@ def create_server(connector: Connector, port: int) -> ThreadingHTTPServer:
                     raise ValueError("请求必须是 JSON 对象")
                 if managed and operation == "pairCollector":
                     result = connector.pair(payload)
+                elif managed and operation == "selectedAttachment":
+                    result = (connector.uploads.begin(payload) if payload.get("action") == "begin"
+                              else connector.uploads.update(payload))
                 elif operation in methods and (managed or self.path.startswith("/invoke/")):
                     result = connector.client().query(operation, payload)
                 else:

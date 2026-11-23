@@ -8,6 +8,7 @@ from http.client import HTTPConnection, HTTPSConnection
 from ipaddress import ip_address
 import json
 import os
+import re
 from pathlib import Path
 import stat
 from urllib.parse import urlsplit
@@ -43,8 +44,14 @@ def call_host(method: str, arguments: dict) -> dict:
         if response.status != 200:
             raise UploadError(f"Local host returned HTTP {response.status}")
         receipt = json.load(response)
-    if receipt.get("requestId") != request_id or receipt.get("success") is not True:
-        raise UploadError("Module did not confirm the request")
+    if not isinstance(receipt, dict) or receipt.get("requestId") != request_id:
+        raise UploadError("宿主回执与本次请求不匹配")
+    if receipt.get("success") is not True:
+        error = receipt.get("error")
+        code = error.get("code") if isinstance(error, dict) else None
+        if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,96}", code):
+            raise UploadError(f"云端方法拒绝了请求（{code}）")
+        raise UploadError("云端方法未确认请求")
     result = receipt.get("data")
     if not isinstance(result, dict):
         raise UploadError("Module returned an invalid receipt")
@@ -95,28 +102,32 @@ def upload_selected_file(message: MessageAttachment, selected_path: Path, mime: 
         return os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
 
     with open(selected_path, "rb", opener=open_selected) as opened:
-        metadata = os.fstat(opened.fileno())
-        if not stat.S_ISREG(metadata.st_mode):
-            raise UploadError("Select a regular file")
-        size = metadata.st_size
-        prepared = invoke("prepareFileUpload", {
-            "accountId": message.account_id, "conversationId": message.conversation_id,
-            "messageId": message.message_id, "attachmentKey": message.attachment_key,
-            "fileName": selected_path.name, "mimeType": mime, "sizeBytes": size,
-        })
-        upload_id = prepared.get("uploadId")
-        if not isinstance(upload_id, str) or not upload_id:
-            raise UploadError("Missing upload identifier")
-        result = prepared
-        if prepared.get("status") == "upload":
-            send(prepared["transfer"], opened, size)
-            current = os.fstat(opened.fileno())
-            if (current.st_size, current.st_mtime_ns) != (size, metadata.st_mtime_ns):
-                raise UploadError("Selected file changed during upload")
-            result = invoke("completeFileUpload", {"uploadId": upload_id})
-        if (result.get("status") != "complete" or result.get("uploadId") != upload_id
-                or type(result.get("sizeBytes")) is not int or result["sizeBytes"] != size
-                or result.get("mimeType") != mime or not isinstance(result.get("fileId"), str)
-                or not result["fileId"]):
-            raise UploadError("File receipt does not match the selected original")
-        return result["fileId"]
+        return upload_opened_file(message, opened, selected_path.name, mime, invoke=invoke, send=send)
+
+
+def upload_opened_file(message, opened, name, mime, *, invoke=call_host, send=send_signed_file):
+    metadata = os.fstat(opened.fileno())
+    if not stat.S_ISREG(metadata.st_mode):
+        raise UploadError("Select a regular file")
+    size = metadata.st_size
+    prepared = invoke("prepareFileUpload", {
+        "accountId": message.account_id, "conversationId": message.conversation_id,
+        "messageId": message.message_id, "attachmentKey": message.attachment_key,
+        "fileName": name, "mimeType": mime, "sizeBytes": size,
+    })
+    upload_id = prepared.get("uploadId")
+    if not isinstance(upload_id, str) or not upload_id:
+        raise UploadError("Missing upload identifier")
+    result = prepared
+    if prepared.get("status") == "upload":
+        send(prepared["transfer"], opened, size)
+        current = os.fstat(opened.fileno())
+        if (current.st_size, current.st_mtime_ns) != (size, metadata.st_mtime_ns):
+            raise UploadError("Selected file changed during upload")
+        result = invoke("completeFileUpload", {"uploadId": upload_id})
+    if (result.get("status") != "complete" or result.get("uploadId") != upload_id
+            or type(result.get("sizeBytes")) is not int or result["sizeBytes"] != size
+            or result.get("mimeType") != mime or not isinstance(result.get("fileId"), str)
+            or not result["fileId"]):
+        raise UploadError("File receipt does not match the selected original")
+    return result["fileId"]

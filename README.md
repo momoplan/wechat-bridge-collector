@@ -23,3 +23,7 @@
 ## 开发与发布
 
 运行 `python3 -m pytest -q` 和 `node --test tests/*.test.mjs`。发布仍由已登记的 `wechat-bridge-collector-release` Jenkins 任务验证并构建本应用的源码制品，再以同一应用身份登记。独立采集器有单独的源码和发布生命周期。
+
+### 上传一条消息的导出原件
+
+在聊天记录里找到已导出原件的图片、语音或文件消息，点击「选择导出原件」。上传使用 Bridge Agent 0.25.0 新增的本包方法调用，需要管理员在对应 Bundle 安装中为这台设备启用 `prepareFileUpload` 和 `completeFileUpload`。连接器会向已配对的采集器按原消息 ID 核对账号及会话，随后用本地选中的文件申请上传，完成后显示消息 ID 和 `fileId`。同一条消息重试沿用云端已完成的文件。零字节文件可以直接取得完成回执。

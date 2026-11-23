@@ -1,5 +1,7 @@
 import { dateInputsToEpochRange } from "./time-range.mjs";
 
+import { selectedUploadControl } from "./selected-upload.mjs";
+
 const ids = [
   "runtime-badge", "refresh-button", "reload-status-button", "notice", "error",
   "chats-view", "contacts-view", "search-view", "status-view", "session-count",
@@ -266,6 +268,9 @@ function messageCard(message) {
   type.textContent = text(message?.messageTypeLabel, text(message?.messageType, "消息"));
   foot.append(type);
   article.append(head, content, foot);
+  if (["image", "voice", "file", "app"].includes(message?.messageType) && message.messageId) {
+    article.append(selectedUploadControl(message, (op, args) => bridge().invoke(op, args)));
+  }
   return article;
 }
 
