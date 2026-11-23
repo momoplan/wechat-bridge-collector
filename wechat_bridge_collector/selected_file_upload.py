@@ -56,6 +56,7 @@ def send_signed_file(transfer: dict, opened, size: int) -> None:
     expiry = datetime.fromisoformat(transfer["expiresAt"].replace("Z", "+00:00"))
     if (target.scheme != "https" or not target.hostname or target.username is not None
             or target.password is not None or target.fragment or transfer.get("method") != "PUT"
+            or transfer.get("contractVersion") != "1.1.0"
             or expiry.tzinfo is None or expiry <= datetime.now(timezone.utc)):
         raise UploadError("Invalid or expired upload slot")
     headers = dict(transfer["headers"])
