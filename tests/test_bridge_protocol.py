@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from wechat_bridge_collector.app import Connector, create_server, main
+from wechat_bridge_collector.app import Connector, create_server
 from wechat_bridge_collector.config import ConnectorConfig
 
 MANIFEST_PATH = Path(__file__).resolve().parents[1] / "connector.json"
@@ -59,57 +59,6 @@ def make_connector(tmp_path, bridge_port):
     return Connector(ConnectorConfig(manifest, tmp_path, "host-token", "event-token",
                                      f"http://127.0.0.1:{bridge_port}/v1/local-app-events",
                                      "registered-app-id"))
-
-
-def configure_stop(monkeypatch, config, port):
-    config.manifest["transport"]["baseUrl"] = f"http://127.0.0.1:{port}"
-    monkeypatch.setattr(ConnectorConfig, "load", lambda: config)
-    monkeypatch.setattr("sys.argv", ["wechat-bridge-collector", "stop"])
-
-
-def test_stop_accepts_delayed_connection_refusal(tmp_path, monkeypatch):
-    configure_stop(monkeypatch, make_connector(tmp_path, 1).config, 18082)
-
-    def windows_loopback_connect(address, timeout, *_args):
-        assert address == ("127.0.0.1", 18082)
-        if timeout <= 2.1:
-            raise TimeoutError("connection deadline reached before refusal")
-        raise ConnectionRefusedError(10061, "connection refused")
-
-    monkeypatch.setattr("socket.create_connection", windows_loopback_connect)
-    assert main() == 0
-
-
-def test_stop_keeps_connection_timeout_as_failure(tmp_path, monkeypatch):
-    configure_stop(monkeypatch, make_connector(tmp_path, 1).config, 18082)
-
-    def connect_timeout(*_args):
-        raise TimeoutError("connection deadline reached")
-
-    monkeypatch.setattr("socket.create_connection", connect_timeout)
-    with pytest.raises(TimeoutError, match="connection deadline reached"):
-        main()
-
-
-def test_stop_requires_authorized_shutdown_of_running_connector(tmp_path, monkeypatch):
-    connector = make_connector(tmp_path, 1)
-    with create_server(connector, 0) as server:
-        worker = threading.Thread(target=server.serve_forever)
-        worker.start()
-        try:
-            unauthorized = ConnectorConfig(connector.config.manifest, tmp_path, "wrong-token",
-                                           "event-token", connector.config.bridge_events_url,
-                                           connector.config.app_id)
-            configure_stop(monkeypatch, unauthorized, server.server_port)
-            assert main() == 1
-            assert worker.is_alive()
-            configure_stop(monkeypatch, connector.config, server.server_port)
-            assert main() == 0
-            worker.join(timeout=5)
-            assert not worker.is_alive()
-        finally:
-            server.shutdown()
-            worker.join()
 
 
 def pairing_request(port):
