@@ -19,6 +19,8 @@ from .selected_upload_session import SelectedUploads
 
 
 COMPLETED_DELIVERY = {"queued", "skipped_no_subscribers"}
+SHUTDOWN_CONNECT_TIMEOUT = 5
+SHUTDOWN_RESPONSE_TIMEOUT = 2
 
 
 class Connector:
@@ -188,13 +190,17 @@ def main() -> int:
     args = parser.parse_args()
     config = ConnectorConfig.load()
     if args.action == "stop":
-        connection = HTTPConnection("127.0.0.1", config.port, timeout=2)
+        connection = HTTPConnection("127.0.0.1", config.port, timeout=SHUTDOWN_CONNECT_TIMEOUT)
         try:
+            # Windows can take just over two seconds to report that a loopback port is closed.
+            try:
+                connection.connect()
+            except ConnectionRefusedError:
+                return 0
+            connection.sock.settimeout(SHUTDOWN_RESPONSE_TIMEOUT)
             connection.request("POST", "/management/v1/shutdown",
                                headers={"Authorization": f"Bearer {config.management_token}"})
             return 0 if connection.getresponse().status == 200 else 1
-        except ConnectionRefusedError:
-            return 0
         finally:
             connection.close()
     os.umask(0o077)
